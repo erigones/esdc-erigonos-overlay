@@ -8,7 +8,7 @@
 # Copyright (c) 2014, Joyent, Inc.
 #
 
-PATH=/usr/bin:/usr/sbin:/smartdc/bin:/opt/local/bin:/opt/local/sbin
-MANPATH=/usr/share/man:/opt/local/man:/smartdc/man
+PATH=/usr/bin:/usr/sbin:/opt/erigones/bin:/smartdc/bin:/opt/smartdc/bin:/opt/local/bin:/opt/local/sbin:/opt/smartdc/agents/bin
+MANPATH=/usr/share/man:/smartdc/man:/opt/smartdc/man:/opt/local/man
 PAGER=less
 export PATH MANPATH PAGER
