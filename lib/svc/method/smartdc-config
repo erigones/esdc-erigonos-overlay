@@ -21,7 +21,7 @@
 #
 #
 # Copyright 2014 Joyent, Inc.  All rights reserved.
-# Copyright 2016 Erigones, Ltd.
+# Copyright 2017 Erigones, s. r. o.
 #
 
 set -o errexit
@@ -68,7 +68,7 @@ case "$1" in
             # If user quit from interactive configuration then we're done.
             [[ ! -f ${USB_PATH}/config ]] && exit $SMF_EXIT_OK
         fi
-    elif /bin/bootparams | grep "^smartos=true" > /dev/null 2>&1; then
+    elif /bin/bootparams | grep "^computenode=true" > /dev/null 2>&1; then
         USB_PATH=/`svcprop -p "joyentfs/usb_copy_path" svc:/system/filesystem/smartdc:default`
 
         # Check for config and run interactive if it doesn't exist.
@@ -92,10 +92,6 @@ case "$1" in
 
     # Write the info about this datacenter to /.dcinfo so we can use in the GZ
     echo "SDC_DATACENTER_NAME='${CONFIG_datacenter_name}'" > /.dcinfo
-    if [[ "${SYSINFO_Bootparam_headnode}" == "true" ]]; then
-        echo "SDC_DATACENTER_HEADNODE_ID=${CONFIG_datacenter_headnode_id}" \
-            >> /.dcinfo
-    fi
 
     if [[ -n "${SYSINFO_Bootparam_smartos}" && -f /usbkey/shadow ]]; then
         echo "setting root password from /usbkey/shadow"

@@ -20,14 +20,14 @@
 # CDDL HEADER END
 #
 # Copyright 2014, Joyent, Inc. All rights reserved.
-# Copyright 2016, Erigones, Ltd.
+# Copyright 2017, Erigones, s. r. o.
 
 set -o xtrace
 
 fatal()
 {
     echo "Error: $1"
-        exit $SMF_EXIT_ERR_FATAL
+    exit $SMF_EXIT_ERR_FATAL
 }
 
 . /lib/svc/share/smf_include.sh
@@ -89,7 +89,7 @@ function make_usb_copy
     if [[ -d ${USBMOUNTPOINT}/os ]]; then
         (cd ${USBMOUNTPOINT}/os ; \
             for dir in $(ls -d *); do
-                # source comes from pcfs which we have got lowering the case
+                # source comes from pcfs which we've got lowering the case
                 # of everything, but we normally use capital T and Z for
                 # buildstamp, so fix it here.
                 source_dir=${dir}
@@ -138,8 +138,9 @@ if [ ${BOOTED_FROM_HDD} -ne 0 ]; then
 fi
 
 /bin/bootparams | grep "^noimport=true" >/dev/null
-# rc = 1 when noimport != true, so import the pools!
 if [ $? -ne 0 ]; then
+    # If the zpool doesn't exist, then there's nothing to mount.
+
     # Import specified zpools, or all zpools available
     pools=$(/bin/bootparams | egrep "^zpools?=" | cut -d= -f2 | tr , ' ')
     if [ -z ${pools} ]; then
@@ -156,7 +157,7 @@ if [ $? -ne 0 ]; then
         # Determine the system pool (only ONE can be system pool) when
         # we run from live image
         if [[ ${BOOTED_FROM_HDD} -ne 1 && -f /${pool}/.system_pool ]]; then
-            SYS_ZPOOL=${pool}
+            SYS_ZPOOL=$pool
         fi
     done
 
@@ -168,8 +169,9 @@ if [ $? -ne 0 ]; then
         config/zpool=${SYS_ZPOOL}
     svccfg -s svc:/system/smartdc/init:default refresh
 
-    # Can destry pools only when running from USB
+    # Can destroy pools only when running from USB
     if [ ${BOOTED_FROM_HDD} -eq 0 ]; then
+
         # If the destroy_zpools boot parameter is set, destroy all zpools
         /bin/bootparams | grep "^destroy_zpools=true" >/dev/null
         if [ $? -eq 0 ]; then
@@ -179,7 +181,7 @@ if [ $? -ne 0 ]; then
         # A machine is reset to its original unsetup state (i.e. a 'factory reset')
         # when the smartdc:factoryreset ZFS user property is set on the var dataset.
         reset=$(zfs get -H -o value smartdc:factoryreset ${SYS_ZPOOL}/var)
-        if [ "${reset}" == "yes" ]; then
+        if [ ${reset} == "yes" ]; then
             destroy_zpools
         fi
     fi
@@ -187,6 +189,10 @@ if [ $? -ne 0 ]; then
     # For the system zpool, mount and configure all system datasets
     zpool status -v ${SYS_ZPOOL}
     if [ $? -eq 0 ]; then
+        # Stash the SUNWdefault.xml file so we can update the
+        # persistent version after mounting zones/config.
+        cp /etc/zones/SUNWdefault.xml /tmp/
+
         if [[ -n $(/bin/bootparams | grep '^headnode=true') || \
             -n $(/bin/bootparams | grep '^computenode=true') ]]; then
             mkdir /usbkey
@@ -208,16 +214,19 @@ if [ $? -ne 0 ]; then
         mount_zfs ${SYS_ZPOOL}/config /etc/zones
         mount_zfs ${SYS_ZPOOL}/opt /opt
 
+        # Update the the persistent SUNWdefault.xml file to match the
+        # contents on ramdisk now that zones/config is mounted.
+        cp /tmp/SUNWdefault.xml /etc/zones/
+        rm -f /tmp/SUNWdefault.xml
+
         if [[ -z $(/bin/bootparams | grep '^computenode=true') ]]; then
             mkdir -p /opt/smartdc/agents/smf
             mount -O -F lofs /var/svc/manifest/site /opt/smartdc/agents/smf
         fi
 
         _swapdev=/dev/zvol/dsk/${SYS_ZPOOL}/swap
-        (swap -l | grep -q ^${_swapdev})
-        if [ $? -ne 0 ]; then
-            swap -a ${_swapdev} || \
-                fatal "failed to configure swap device"
+        if ! swap -l | grep -q ^${_swapdev}; then
+            swap -a ${_swapdev} || fatal "failed to configure swap device"
         fi
 
         #
@@ -234,130 +243,135 @@ if [ $? -ne 0 ]; then
             fatal "failed to set checksum=noparity on dump zvol"
         zpool set feature@multi_vdev_crash_dump=enabled ${SYS_ZPOOL} || \
             fatal "failed to enable multi_vdev_crash_dump ZFS feature"
-        _dumpdev=/dev/zvol/dsk/${SYS_ZPOOL}/dump
+        _dumpdev=/dev/zvol/dsk/${SYS_ZPOOL}/dum
         dumpadm -y -d ${_dumpdev} || \
-                fatal "failed to configure dump device"
+            fatal "failed to configure dump device"
 
-        zfs list -H -o name ${SYS_ZPOOL}/cores/global >/dev/null 2>&1
-        if [ $? -ne 0 ]; then
-            # Booting for the first time on a CN whose cores dataset is setup
-            # in the 6.x style.  Convert to the new style.
-            zfs destroy -r ${SYS_ZPOOL}/cores
-            zfs create -o compression=gzip -o mountpoint=none ${SYS_ZPOOL}/cores
-            zfs create -o quota=10g -o mountpoint=/${SYS_ZPOOL}/global/cores \
-                ${SYS_ZPOOL}/cores/global
-            ln -s /${SYS_ZPOOL}/global/cores /cores
-        fi
+	zfs list -H -o name ${SYS_ZPOOL}/cores/global >/dev/null 2>&1
+	if [ $? -ne 0 ]; then
+	    # Booting for the first time on a CN whose cores dataset is setup
+	    # in the 6.x style.  Convert to the new style.
+	    zfs destroy -r ${SYS_ZPOOL}/cores
+	    zfs create -o compression=gzip -o mountpoint=none ${SYS_ZPOOL}/cores
+	    zfs create -o quota=10g -o mountpoint=/${SYS_ZPOOL}/global/cores \
+	        ${SYS_ZPOOL}/cores/global
+	fi
+
+	ln -s /${SYS_ZPOOL}/global/cores /cores
+
+	[[ -f /${SYS_ZPOOL}/currbooted ]] && \
+            mv /${SYS_ZPOOL}/currbooted /${SYS_ZPOOL}/lastbooted
+	uname -v >/${SYS_ZPOOL}/currbooted
     fi
 fi
 
-if [ ${BOOTED_FROM_HDD} -eq 0 ]
-then
-    # The rest only applies to the headnode and computenode, not standalone system
-    /bin/bootparams | egrep "^(headnode=true|computenode=true)" >/dev/null || exit $SMF_EXIT_OK
-
-    # If we rebooted during an upgrade, we're in deep trouble.
-    if [ -d /var/upgrade_in_progress ]; then
-        echo "ERROR: An upgrade was in progress when the system rebooted." \
-            >/dev/console
-        echo "       The system is in an indeterminate state, unable to continue." \
-            >/dev/console
-        exit $SMF_EXIT_ERR_FATAL
-    fi
-
-    mount_usb_msg=""
-
-    if [[ -d /mnt ]]; then
-        chown root:root /mnt
-        chmod 700 /mnt
-    else
-        mkdir -m 700 /mnt
-    fi
-
-    mkdir -p ${USBMOUNTPOINT}
-
-    if [[ -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
-        mount_usb_msg="already mounted"
-
-        zpool list | grep ${SYS_ZPOOL}
-        if [[ $? == 0 ]]; then
-            make_usb_copy
-            exit $?
-        fi
-        echo "Running from USB..." > /dev/console
-        exit 0;
-    fi
-
-    # First thing to do is to mount the USB key / VMWare disk
-    USBKEYS=`/usr/bin/disklist -a`
-    for key in ${USBKEYS}; do
-        if [[ `/usr/sbin/fstyp /dev/dsk/${key}p0:1` == 'pcfs' ]]; then
-            /usr/sbin/mount -F pcfs -o foldcase,noatime /dev/dsk/${key}p0:1 \
-                ${USBMOUNTPOINT};
-            if [[ $? == "0" ]]; then
-                if [[ ! -f ${USBMOUNTPOINT}/.joyliveusb ]]; then
-                    if [[ ${DEBUG} == "true" ]]; then
-                        mount_usb_msg="${mount_usb_msg}\n[debug] didn't find ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${key}p0:1"
-                    fi
-                    /usr/sbin/umount ${USBMOUNTPOINT};
-                else
-                    if [[ ${DEBUG} == "true" ]]; then
-                        mount_usb_msg="${mount_usb_msg}\n[debug] found ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${key}p0:1"
-                    fi
-                    break;
-                fi
-            elif [[ ${DEBUG} == "true" ]]; then
-                mount_usb_msg="${mount_usb_msg}\n[debug] mount failed for pcfs /dev/dsk/${key}p0:1"
-            fi
-        elif [[ ${DEBUG} == "true" ]]; then
-            mount_usb_msg="${mount_usb_msg}\n[debug] /dev/dsk/${key}p0:1 is not pcfs"
-        fi
-    done
-
-    if [[ ! -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
-        # we're probably VMWare, so we're looking at a non-USB disk.
-        for disk in `/usr/bin/disklist -a`; do
-            if [[ `/usr/sbin/fstyp /dev/dsk/${disk}p1` == 'pcfs' ]]; then
-                /usr/sbin/mount -F pcfs -o foldcase,noatime /dev/dsk/${disk}p1 \
-                    ${USBMOUNTPOINT};
-                if [[ $? == "0" ]]; then
-                    if [[ ! -f ${USBMOUNTPOINT}/.joyliveusb ]]; then
-                        if [[ ${DEBUG} == "true" ]]; then
-                            mount_usb_msg="${mount_usb_msg}\n[debug] didn't find ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${disk}p1"
-                        fi
-                        /usr/sbin/umount ${USBMOUNTPOINT};
-                    else
-                        if [[ ${DEBUG} == "true" ]]; then
-                            mount_usb_msg="${mount_usb_msg}\n[debug] found ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${disk}p1"
-                        fi
-                        break;
-                    fi
-                elif [[ ${DEBUG} == "true" ]]; then
-                    mount_usb_msg="${mount_usb_msg}\n[debug] unable to mount /dev/dsk/${disk}p1"
-                fi
-            elif [[ ${DEBUG} == "true" ]]; then
-                mount_usb_msg="${mount_usb_msg}\n[debug] /dev/dsk/${disk}p1 is not pcfs"
-            fi
-        done
-    fi
-
-    if [[ -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
-        mount_usb_msg="success"
-
-        zpool list | grep ${SYS_ZPOOL}
-
-        if [[ $? == 0 ]]; then
-            make_usb_copy
-        fi
-
-        echo "Running from USB..." > /dev/console
-        exit 0;
-    fi
-
-    mount_usb_msg="${mount_usb_msg}\n[FATAL] mount_usb(): could not find USB Key"
-    exit 1;
-else
+if [ ${BOOTED_FROM_HDD} -eq 1 ]; then
     # Booted from HDD
     echo "Running from HDD..." > /dev/console
     exit 0
 fi
+
+# The rest only applies to the headnode and computenode, not standalone system
+/bin/bootparams | egrep "^(headnode=true|computenode=true)" >/dev/null || exit $SMF_EXIT_OK
+
+# If we rebooted during an upgrade, we're in deep trouble.
+if [ -d /var/upgrade_in_progress ]; then
+    echo "ERROR: An upgrade was in progress when the system rebooted." \
+        >/dev/console
+    echo "       The system is in an indeterminate state, unable to continue." \
+        >/dev/console
+    exit $SMF_EXIT_ERR_FATAL
+fi
+
+mount_usb_msg=""
+
+if [[ -d /mnt ]]; then
+    chown root:root /mnt
+    chmod 700 /mnt
+else
+    mkdir -m 700 /mnt
+fi
+
+mkdir -p ${USBMOUNTPOINT}
+
+if [[ -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
+    mount_usb_msg="already mounted"
+
+    zpool list | grep ${SYS_ZPOOL}
+    if [[ $? == 0 ]]; then
+        make_usb_copy
+        exit $?
+    fi
+
+    echo "Running from USB..." > /dev/console
+    exit 0;
+fi
+
+# First thing to do is to mount the USB key / VMWare disk
+USBKEYS=`/usr/bin/disklist -a`
+for key in ${USBKEYS}; do
+    if [[ `/usr/sbin/fstyp /dev/dsk/${key}p0:1` == 'pcfs' ]]; then
+        /usr/sbin/mount -F pcfs -o foldcase,noatime /dev/dsk/${key}p0:1 \
+            ${USBMOUNTPOINT};
+        if [[ $? == "0" ]]; then
+            if [[ ! -f ${USBMOUNTPOINT}/.joyliveusb ]]; then
+                if [[ ${DEBUG} == "true" ]]; then
+                    mount_usb_msg="${mount_usb_msg}\n[debug] didn't find ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${key}p0:1"
+                fi
+                /usr/sbin/umount ${USBMOUNTPOINT};
+            else
+                if [[ ${DEBUG} == "true" ]]; then
+                    mount_usb_msg="${mount_usb_msg}\n[debug] found ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${key}p0:1"
+                fi
+                break;
+            fi
+        elif [[ ${DEBUG} == "true" ]]; then
+            mount_usb_msg="${mount_usb_msg}\n[debug] mount failed for pcfs /dev/dsk/${key}p0:1"
+        fi
+    elif [[ ${DEBUG} == "true" ]]; then
+        mount_usb_msg="${mount_usb_msg}\n[debug] /dev/dsk/${key}p0:1 is not pcfs"
+    fi
+done
+
+if [[ ! -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
+    # we're probably VMWare, so we're looking at a non-USB disk.
+    for disk in `/usr/bin/disklist -a`; do
+        if [[ `/usr/sbin/fstyp /dev/dsk/${disk}p1` == 'pcfs' ]]; then
+            /usr/sbin/mount -F pcfs -o foldcase,noatime /dev/dsk/${disk}p1 \
+                ${USBMOUNTPOINT};
+            if [[ $? == "0" ]]; then
+                if [[ ! -f ${USBMOUNTPOINT}/.joyliveusb ]]; then
+                    if [[ ${DEBUG} == "true" ]]; then
+                        mount_usb_msg="${mount_usb_msg}\n[debug] didn't find ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${disk}p1"
+                    fi
+                    /usr/sbin/umount ${USBMOUNTPOINT};
+                else
+                    if [[ ${DEBUG} == "true" ]]; then
+                        mount_usb_msg="${mount_usb_msg}\n[debug] found ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${disk}p1"
+                    fi
+                    break;
+                fi
+            elif [[ ${DEBUG} == "true" ]]; then
+                mount_usb_msg="${mount_usb_msg}\n[debug] unable to mount /dev/dsk/${disk}p1"
+            fi
+        elif [[ ${DEBUG} == "true" ]]; then
+            mount_usb_msg="${mount_usb_msg}\n[debug] /dev/dsk/${disk}p1 is not pcfs"
+        fi
+    done
+fi
+
+if [[ -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
+    mount_usb_msg="success"
+
+    zpool list | grep ${SYS_ZPOOL}
+
+    if [[ $? == 0 ]]; then
+        make_usb_copy
+    fi
+
+    echo "Running from USB..." > /dev/console
+    exit 0;
+fi
+
+mount_usb_msg="${mount_usb_msg}\n[FATAL] mount_usb(): could not find USB Key"
+exit 1;

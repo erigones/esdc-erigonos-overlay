@@ -22,7 +22,7 @@
 #
 # Copyright (c) 1992, 2010, Oracle and/or its affiliates. All rights reserved.
 # Copyright 2016 Joyent, Inc.
-# Copyright 2016 Erigones, Ltd.
+# Copyright 2017 Erigones, s. r. o.
 #
 
 # Make sure that the libraries essential to this stage of booting can be found.
@@ -66,47 +66,46 @@ if smf_is_nonglobalzone; then
 fi
 
 run_from_usb() {
-    echo "Running from USB live image..." >&2
+	echo "Running from USB live image..." >&2
 
-    /sbin/mount -F ufs -o remount,rw,nologging /devices/ramdisk:a /
-    /usr/sbin/lofiadm -X -a /usr.lgz
+	/sbin/mount -F ufs -o remount,rw,nologging /devices/ramdisk:a /
+	/usr/sbin/lofiadm -X -a /usr.lgz
 
-    #
-    # Prior to mounting /usr, devfsadm is not yet available.  As such, we must
-    # locate the lofi block device node in /devices rather than in /dev.  This
-    # path has changed over time so we try both the old (pre-partition support)
-    # and new paths.
-    #
-    lofi_devices_path='/devices/pseudo/lofi@1:disk'
-    if [ ! -b "$lofi_devices_path" ]; then
-        lofi_devices_path='/devices/pseudo/lofi@0:1'
-        if [ ! -b "$lofi_devices_path" ]; then
-            echo 'could not locate lofi block device in /devices' >&2
-            exit $SMF_EXIT_ERR_FATAL
-        fi
-    fi
+	#
+	# Prior to mounting /usr, devfsadm is not yet available.  As such, we must
+	# locate the lofi block device node in /devices rather than in /dev.  This
+	# path has changed over time so we try both the old (pre-partition support)
+	# and new paths.
+	#
+	lofi_devices_path='/devices/pseudo/lofi@1:disk'
+	if [ ! -b "$lofi_devices_path" ]; then
+		lofi_devices_path='/devices/pseudo/lofi@0:1'
+		if [ ! -b "$lofi_devices_path" ]; then
+			echo 'could not locate lofi block device in /devices' >&2
+			exit $SMF_EXIT_ERR_FATAL
+		fi
+	fi
 
-    if ! /sbin/mount -F ufs -o ro "$lofi_devices_path" /usr; then
-        echo "could not mount /usr from $lofi_devices_path" >&2
-        exit $SMF_EXIT_ERR_FATAL
-    fi
-    return
+	if ! /sbin/mount -F ufs -o ro "$lofi_devices_path" /usr; then
+		echo "could not mount /usr from $lofi_devices_path" >&2
+		exit $SMF_EXIT_ERR_FATAL
+	fi
+
+	return
 }
 
 run_from_hdd() {
-    echo "Running from hard drive..." >&2
-    return
+	echo "Running from hard drive..." >&2
+	return
 }
 
 # mounted() will return 0 if root filesystem is of type ZFS, otherwise
 # we assume that we run from USB
-mounted "/" "-" "zfs" < /etc/mnttab
-if [ $? -eq 0 ]; then
-    run_from_hdd
+if mounted "/" "-" "zfs" < /etc/mnttab; then
+	run_from_hdd
 else
-    run_from_usb
+	run_from_usb
 fi
-
 #
 # Update kernel driver.conf cache with any additional driver.conf
 # files found on /usr, and device permissions from /etc/minor_perm.
