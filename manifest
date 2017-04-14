@@ -12,7 +12,6 @@ f lib/svc/method/smartdc-init 0755 root bin
 f lib/svc/method/fs-joyent 0755 root bin
 d usr 0755 root bin
 d usr/sbin 0755 root bin
-f usr/sbin/factoryreset 0755 root bin
 f usr/sbin/set-root-password 0755 root bin
 f usr/sbin/opensnoop 0755 root bin
 f usr/sbin/execsnoop 0755 root bin
