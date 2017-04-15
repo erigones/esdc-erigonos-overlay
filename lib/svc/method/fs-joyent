@@ -194,14 +194,14 @@ if [ $? -ne 0 ]; then
         cp /etc/zones/SUNWdefault.xml /tmp/
 
         if [[ -n $(/bin/bootparams | grep '^headnode=true') || \
-            -n $(/bin/bootparams | grep '^computenode=true') ]]; then
+            -n $(/bin/bootparams | grep '^smartos=true') ]]; then
             mkdir /usbkey
             mount_zfs ${SYS_ZPOOL}/usbkey /usbkey
         fi
 
         if [ ${BOOTED_FROM_HDD} -eq 0 ]; then
             VARDS="${SYS_ZPOOL}/var"
-            if [[ -n $(/bin/bootparams | grep '^computenode=true') ]]; then
+            if [[ -n $(/bin/bootparams | grep '^smartos=true') ]]; then
                 mount -F lofs /usbkey/shadow /etc/shadow
                 mount -F lofs /usbkey/ssh /etc/ssh
             fi
@@ -218,11 +218,6 @@ if [ $? -ne 0 ]; then
         # contents on ramdisk now that zones/config is mounted.
         cp /tmp/SUNWdefault.xml /etc/zones/
         rm -f /tmp/SUNWdefault.xml
-
-        if [[ -z $(/bin/bootparams | grep '^computenode=true') ]]; then
-            mkdir -p /opt/smartdc/agents/smf
-            mount -O -F lofs /var/svc/manifest/site /opt/smartdc/agents/smf
-        fi
 
         _swapdev=/dev/zvol/dsk/${SYS_ZPOOL}/swap
         if ! swap -l | grep -q ^${_swapdev}; then
@@ -243,8 +238,7 @@ if [ $? -ne 0 ]; then
             fatal "failed to set checksum=noparity on dump zvol"
         zpool set feature@multi_vdev_crash_dump=enabled ${SYS_ZPOOL} || \
             fatal "failed to enable multi_vdev_crash_dump ZFS feature"
-        _dumpdev=/dev/zvol/dsk/${SYS_ZPOOL}/dum
-        dumpadm -y -d ${_dumpdev} || \
+	dumpadm -y -d /dev/zvol/dsk/${SYS_ZPOOL}/dump || \
             fatal "failed to configure dump device"
 
 	zfs list -H -o name ${SYS_ZPOOL}/cores/global >/dev/null 2>&1
@@ -269,9 +263,11 @@ if [ ${BOOTED_FROM_HDD} -eq 1 ]; then
     # Booted from HDD
     echo "Running from HDD..." > /dev/console
     exit 0
+else
+    echo "Running from USB..." > /dev/console
 fi
 
-# The rest only applies to the headnode and computenode, not standalone system
+# The rest only applies to the headnode and Danube Cloud compute node
 /bin/bootparams | egrep "^(headnode=true|computenode=true)" >/dev/null || exit $SMF_EXIT_OK
 
 # If we rebooted during an upgrade, we're in deep trouble.
@@ -297,13 +293,11 @@ mkdir -p ${USBMOUNTPOINT}
 if [[ -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
     mount_usb_msg="already mounted"
 
-    zpool list | grep ${SYS_ZPOOL}
+    zpool list | grep zones
     if [[ $? == 0 ]]; then
         make_usb_copy
         exit $?
     fi
-
-    echo "Running from USB..." > /dev/console
     exit 0;
 fi
 
@@ -363,13 +357,12 @@ fi
 if [[ -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
     mount_usb_msg="success"
 
-    zpool list | grep ${SYS_ZPOOL}
+    zpool list | grep zones
 
     if [[ $? == 0 ]]; then
         make_usb_copy
     fi
 
-    echo "Running from USB..." > /dev/console
     exit 0;
 fi
 

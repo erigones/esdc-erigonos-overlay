@@ -417,9 +417,9 @@ case "$1" in
         exit $SMF_EXIT_OK
     fi
 
-    # We want to run 
+    # We want to run
     if /bin/bootparams | egrep "^(headnode=true|computenode=true)" > /dev/null 2>&1; then
-        if [[ ${BOOTED_FROM_HDD} -eq 0 ]]; then
+        if [[ -n $(/bin/bootparams | grep "^headnode=true") && ${BOOTED_FROM_HDD} -eq 0 ]]; then
             USBMOUNT=/mnt/`svcprop -p joyentfs/usb_mountpoint svc:/system/filesystem/smartdc:default`
         else
             USBMOUNT=/`svcprop -p joyentfs/usb_copy_path svc:/system/filesystem/smartdc:default`
@@ -430,7 +430,7 @@ case "$1" in
 	[[ ! -f $USBMOUNT/config ]] && exit $SMF_EXIT_OK
 
         initial_script=${USBMOUNT}/$(grep "^initial_script=" $USBMOUNT/config.inc/generic 2>/dev/null | cut -d'=' -f2-)
-        if [[ -n ${initial_script} ]] && [[ -e ${initial_script} ]]; then
+        if [ -n ${initial_script} ] && [ -e ${initial_script} ]; then
             # Execute the script
             ${initial_script}
             result=$?
@@ -444,7 +444,7 @@ case "$1" in
             fi
         fi
     fi
-    if /bin/bootparams | grep "^computenode=true" > /dev/null 2>&1; then
+    if /bin/bootparams | grep "^smartos=true" > /dev/null 2>&1; then
         set_default_fw_rules
     else
 	install_config
@@ -508,7 +508,7 @@ case "$1" in
     configure_fwadm
     configure_vmadm
 
-	if /bin/bootparams | egrep "^(headnode=true|computenode=true)" > /dev/null 2>&1; then
+    if /bin/bootparams | egrep "^(headnode=true|computenode=true)" > /dev/null 2>&1; then
         # Unmount only if running from live image
         [ ${BOOTED_FROM_HDD} -eq 0 ] && /usr/sbin/umount $USBMOUNT
     fi

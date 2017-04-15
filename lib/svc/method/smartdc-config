@@ -28,7 +28,6 @@ set -o errexit
 set -o xtrace
 
 . /lib/svc/share/smf_include.sh
-. /lib/svc/share/fs_include.sh
 . /lib/sdc/config.sh
 
 export PATH="/usr/sbin:/sbin:/usr/bin"
@@ -41,18 +40,11 @@ set_root_password() {
       && mv /etc/shadow.new /etc/shadow
 }
 
-# Are we booted from HDD? (0/1)
-BOOTED_FROM_HDD=1
-
-# Try to determine if we are booted from HDD
-# Do this by finding out whether "/" is being mounted as "zfs"
-mounted "/" "-" "zfs" < /etc/mnttab || BOOTED_FROM_HDD=0
-
 case "$1" in
 'start')
 
-    # If we're a Danube Cloud headnode or computenode, see if we have to do interactive configuration.
-    if [[ -n $(/bin/bootparams | egrep "^(headnode=true|computenode=true)") && ${BOOTED_FROM_HDD} -eq 0 ]]; then
+    # If we're a headnode, see if we have to do interactive configuration.
+    if /bin/bootparams | grep "^headnode=true" > /dev/null 2>&1; then
         USB_PATH=/mnt/`svcprop -p "joyentfs/usb_mountpoint" svc:/system/filesystem/smartdc:default`
 
         # Check for config and run interactive if it doesn't exist.
@@ -68,8 +60,9 @@ case "$1" in
             # If user quit from interactive configuration then we're done.
             [[ ! -f ${USB_PATH}/config ]] && exit $SMF_EXIT_OK
         fi
-    elif /bin/bootparams | grep "^computenode=true" > /dev/null 2>&1; then
+    elif /bin/bootparams | grep "^smartos=true" > /dev/null 2>&1; then
         USB_PATH=/`svcprop -p "joyentfs/usb_copy_path" svc:/system/filesystem/smartdc:default`
+        USBMOUNT=/mnt/`svcprop -p "joyentfs/usb_mountpoint" svc:/system/filesystem/smartdc:default`
 
         # Check for config and run interactive if it doesn't exist.
         if [[ ! -f ${USB_PATH}/config ]]; then
@@ -78,8 +71,16 @@ case "$1" in
                 exit $SMF_EXIT_OK
             fi
 
+            if [[ -f "${USBMOUNT}/scripts/prompt-config.sh" ]]; then
+                prompt_config="${USBMOUNT}/scripts/prompt-config.sh"
+            elif [[ -f "${USB_PATH}/scripts/prompt-config.sh" ]]; then
+                prompt_config="${USB_PATH}/scripts/prompt-config.sh"
+            else
+                prompt_config="/smartdc/lib/smartos_prompt_config.sh"
+            fi
+
             /smartdc/lib/sdc-on-tty -d /dev/console \
-                ${USB_PATH}/scripts/prompt-config.sh "${USB_PATH}"
+                "${prompt_config}" "${USB_PATH}"
 
             # If user quit from interactive configuration then we're done.
             [[ ! -f ${USB_PATH}/config ]] && exit $SMF_EXIT_OK
