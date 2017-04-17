@@ -72,6 +72,7 @@ case "$1" in
             fi
 
             if [[ -f "${USBMOUNT}/scripts/prompt-config.sh" ]]; then
+                USB_PATH="${USBMOUNT}"
                 prompt_config="${USBMOUNT}/scripts/prompt-config.sh"
             elif [[ -f "${USB_PATH}/scripts/prompt-config.sh" ]]; then
                 prompt_config="${USB_PATH}/scripts/prompt-config.sh"
