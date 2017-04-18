@@ -68,7 +68,7 @@ case "$1" in
         if [[ ! -f ${USB_PATH}/config ]]; then
             if /bin/bootparams | grep "^noimport=true" >/dev/null 2>&1; then
                 if /bin/bootparams | grep "^root_shadow=" >/dev/null 2>&1; then
-                    set_root_password "$(/bin/bootparams grep "^root_shadow=" | cut -d'=' -f2-)"
+                    set_root_password "$(/bin/bootparams | grep "^root_shadow=" | cut -d'=' -f2-)"
                     echo "Set root password from boot parameters."
                 fi
                 # Skipping interactive config, bypass rest of script.
