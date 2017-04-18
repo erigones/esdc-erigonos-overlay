@@ -6,10 +6,11 @@ f root/.bashrc 0644 root bin
 d lib 0755 root bin
 d lib/svc 0755 root bin
 d lib/svc/method 0755 root bin
-f lib/svc/method/smartdc-config 0755 root bin
-f lib/svc/method/fs-root 0755 root bin
-f lib/svc/method/smartdc-init 0755 root bin
 f lib/svc/method/fs-joyent 0755 root bin
+f lib/svc/method/fs-root 0755 root bin
+f lib/svc/method/net-physical 0755 root sys
+f lib/svc/method/smartdc-config 0755 root bin
+f lib/svc/method/smartdc-init 0755 root bin
 d usr 0755 root bin
 d usr/sbin 0755 root bin
 f usr/sbin/set-root-password 0755 root bin
