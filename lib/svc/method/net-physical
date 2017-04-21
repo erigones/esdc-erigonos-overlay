@@ -530,8 +530,9 @@ if smf_is_globalzone; then
     if [[ -n "${admin_vlan_id}" && "${admin_vlan_id}" -ne 0 ]]; then
         admin_iface_active="admin0"
         dladm create-vnic -l ${SYSINFO_NIC_admin} -v ${admin_vlan_id} ${admin_iface_active}
+        /sbin/ifconfig ${admin_iface_active} plumb
     else
-        admin_iface_active="${admin_iface}"
+        admin_iface_active="${SYSINFO_NIC_admin}"
     fi
 
     if [[ -n ${admin_ip} ]] && [[ -n ${admin_netmask} ]];
