@@ -277,6 +277,9 @@ if [ ${BOOTED_FROM_HDD} -eq 1 ]; then
     # Booted from HDD
     echo "Running from HDD..." > /dev/console
     exit 0
+elif /bin/bootparams | grep "^netboot=true" > /dev/null; then
+    echo "Running from NET..." > /dev/console
+	exit 0
 else
     echo "Running from USB..." > /dev/console
 fi

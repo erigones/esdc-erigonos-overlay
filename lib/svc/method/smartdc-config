@@ -40,6 +40,141 @@ set_root_password() {
       && mv /etc/shadow.new /etc/shadow
 }
 
+# Gets the link state for the given interface
+get_link_state() {
+    set -o xtrace
+    link_state=$(/usr/sbin/dladm show-phys -po state "${1}" 2>/dev/null)
+}
+
+# Waits for up to 10 seconds for the link state to change to the given value
+wait_for_nic_state() {
+    local nic="$1"
+    local state="$2"
+    local i=0
+
+    set -o xtrace
+    echo "wait_for_nic_state: nic ${nic} waiting for state '${state}'"
+
+    while [[ ${i} -ne 10 ]]; do
+        get_link_state "${nic}"
+        echo "  ${i}: nic=${nic} link_state=${link_state}"
+
+        if [[ "${link_state}" == "${state}" ]]; then
+            return 0
+        fi
+
+        sleep 1
+        ((i++))
+    done
+
+    echo "wait_for_nic_state: nic {$nic} finished in state '${link_state}'"
+    return 1
+}
+
+# Plumbs the interface, and attempts to work around poorly-behaved
+# drivers that can't handle plumb commands too quickly after one another
+plumb_nic() {
+    local nic="$1"
+
+    set -o xtrace
+    driver="${nic%%[0-9]*}"
+    get_link_state "${nic}"
+
+    if [[ "$link_state" == "down" ]]; then
+        echo "NIC '${nic}' is down: unplumbing"
+        /sbin/ifconfig "${nic}" down unplumb
+        wait_for_nic_state "${nic}" "unknown"
+    fi
+
+    # There's some sort of race condition in the bnx driver: if the plumb
+    # command comes too soon after the unplumb, the interface can come up
+    # in a state where it never fires interrupts for link state changes.
+    if [[ "$driver" == "bnx" ]]; then
+        sleep 5
+    fi
+
+    /sbin/ifconfig "${nic}" plumb
+    wait_for_nic_state "${nic}" "up"
+
+    return $?
+}
+
+get_nic_ip() {
+    local nic="$1"
+    local timeout=30
+    local nic_ip=""
+
+    while [[ ${timeout} -gt 0 ]]; do
+        nic_ip=$(/sbin/ifconfig "${nic}" 2> /dev/null| grep inet | awk '{ print $2 }')
+
+        if [[ -n "${nic_ip}" && "${nic_ip}" != "0.0.0.0" ]]; then
+            break  # we have a nic_ip
+        fi
+
+        nic_ip=""
+        timeout=$((${timeout} - 1))
+        sleep 1
+    done
+
+    echo "${nic_ip}"
+}
+
+# Temporary activates DHCP on any NIC and downloads a netboot_install_script
+# After the script finishes the network is shut down.
+netboot_config() {
+    local install_script="/var/tmp/netboot_install_script"
+
+    if [[ -n "${SYSINFO_NIC_admin}" ]]; then
+        admin_nics="${SYSINFO_NIC_admin}"
+    else
+        admin_nics="$(/usr/sbin/dladm show-phys -p -o link)"
+    fi
+
+    NIC_UP=""
+
+    for nic in ${admin_nics}; do
+        nic=$(echo "${nic}" | tr -d '[:space:]')
+
+        [[ -z "${nic}" ]] && continue
+
+        echo "Activating NIC ${nic}"
+
+        if plumb_nic "${nic}"; then
+            echo "Running DHCP on NIC ${nic}"
+            /sbin/ifconfig "${nic}" dhcp || /bin/true
+            nic_dhcp_ip=$(get_nic_ip "${nic}")
+
+            if [[ -n "${nic_dhcp_ip}" ]]; then
+                echo "Got NIC ${nic} IP address: ${nic_dhcp_ip}"
+                NIC_UP="${nic}"
+                break
+            else
+                /sbin/ifconfig "${nic}" unplumb 2> /dev/null || /bin/true
+                continue
+            fi
+        fi
+    done
+
+    if [[ -n "${NIC_IP}" ]]; then
+        install_script_url="$(/bin/bootparams | grep "^netboot_install_script=" | cut -d'=' -f2-)"
+        if curl -m 30 -f -s -k -L -o "${install_script}" "${install_script_url}"; then
+            echo "Running netboot_install_script from ${install_script_url}"
+            chmod +x "${install_script}"
+            "${install_script}"
+            /sbin/ifconfig "${NIC_IP}" unplumb 2> /dev/null
+            return 0
+        else
+            /sbin/ifconfig "${NIC_IP}" unplumb 2> /dev/null
+            echo "FATAL: Failed to download netboot_install_script from ${install_script_url}" >&2
+        fi
+    else
+        echo "FATAL: Could not configure DHCP for netboot_install_script" >&2
+    fi
+
+    return 1
+}
+
+
 case "$1" in
 'start')
 
@@ -75,17 +210,23 @@ case "$1" in
                 exit $SMF_EXIT_OK
             fi
 
-            if [[ -f "${USBMOUNT}/scripts/prompt-config.sh" ]]; then
-                USB_PATH="${USBMOUNT}"
-                prompt_config="${USBMOUNT}/scripts/prompt-config.sh"
-            elif [[ -f "${USB_PATH}/scripts/prompt-config.sh" ]]; then
-                prompt_config="${USB_PATH}/scripts/prompt-config.sh"
+            if /bin/bootparams | grep "^netboot_install_script=" > /dev/null 2>&1; then
+                if ! netboot_config; then
+                    exit ${SMF_EXIT_ERR_CONFIG}
+                fi
             else
-                prompt_config="/smartdc/lib/smartos_prompt_config.sh"
-            fi
+                if [[ -f "${USBMOUNT}/scripts/prompt-config.sh" ]]; then
+                    USB_PATH="${USBMOUNT}"
+                    prompt_config="${USBMOUNT}/scripts/prompt-config.sh"
+                elif [[ -f "${USB_PATH}/scripts/prompt-config.sh" ]]; then
+                    prompt_config="${USB_PATH}/scripts/prompt-config.sh"
+                else
+                    prompt_config="/smartdc/lib/smartos_prompt_config.sh"
+                fi
 
-            /smartdc/lib/sdc-on-tty -d /dev/console \
-                "${prompt_config}" "${USB_PATH}"
+                /smartdc/lib/sdc-on-tty -d /dev/console \
+                    "${prompt_config}" "${USB_PATH}"
+            fi
 
             # If user quit from interactive configuration then we're done.
             [[ ! -f ${USB_PATH}/config ]] && exit $SMF_EXIT_OK
