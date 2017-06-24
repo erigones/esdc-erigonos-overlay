@@ -155,16 +155,16 @@ netboot_config() {
         fi
     done
 
-    if [[ -n "${NIC_IP}" ]]; then
+    if [[ -n "${NIC_UP}" ]]; then
         install_script_url="$(/bin/bootparams | grep "^netboot_install_script=" | cut -d'=' -f2-)"
         if curl -m 30 -f -s -k -L -o "${install_script}" "${install_script_url}"; then
             echo "Running netboot_install_script from ${install_script_url}"
             chmod +x "${install_script}"
-            "${install_script}"
-            /sbin/ifconfig "${NIC_IP}" unplumb 2> /dev/null
+            "${install_script}" "${NIC_UP}" >/dev/console 2>&1
+            /sbin/ifconfig "${NIC_UP}" unplumb 2> /dev/null
             return 0
         else
-            /sbin/ifconfig "${NIC_IP}" unplumb 2> /dev/null
+            /sbin/ifconfig "${NIC_UP}" unplumb 2> /dev/null
             echo "FATAL: Failed to download netboot_install_script from ${install_script_url}" >&2
         fi
     else
