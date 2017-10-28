@@ -23,6 +23,7 @@
 # Copyright (c) 1984, 1986, 1987, 1988, 1989 AT&T. All rights reserved.
 # Copyright (c) 1999, 2010, Oracle and/or its affiliates. All rights reserved.
 # Copyright 2017 Joyent, Inc.
+# Copyright 2017 Erigones, s. r. o.
 #
 
 . /lib/svc/share/smf_include.sh
@@ -49,6 +50,17 @@ ActiveAggrLinks=
 typeset -A ActiveAggrLinks
 
 smf_netstrategy
+
+function normalize_mac
+{
+    typeset mac
+
+    mac="$1"
+
+    echo "${mac}" | awk -F':' '{ print $1, $2, $3, $4, $5, $6 }' | { read o1 o2 o3 o4 o5 o6 junk
+        printf "%02x:%02x:%02x:%02x:%02x:%02x" 0x${o1} 0x${o2} 0x${o3} 0x${o4} 0x${o5} 0x${o6}
+    }
+}
 
 function add_active_aggr_links
 {
@@ -491,6 +503,27 @@ if smf_is_globalzone; then
         /usr/sbin/dladm create-etherstub -t $stub || echo "ERROR: could not create etherstub ${stub}."
     done
 
+    # Change MAC addresses
+    if [[ -n "${CONFIG_change_mac}" ]]; then
+        sysinfo_ifaces=$(sysinfo -p | grep "^Network_Interface_.*_MAC_Address" || true)
+
+        for mac_pair in $(echo "${CONFIG_change_mac}" | sed -e "s/;/ /g"); do
+            cur_mac="${mac_pair%,*}"
+            new_mac="${mac_pair#*,}"
+            sysinfo_iface=$(echo "${sysinfo_ifaces}" | grep "$(normalize_mac "${cur_mac}")" || true)
+
+            if [[ -n "${sysinfo_iface}" ]]; then
+                iface=$(echo "${sysinfo_iface}" | cut -d '_' -f 3)
+                echo "changing MAC address of ${iface}: ${cur_mac} -> ${new_mac}"
+                ifconfig "${iface}" ether "${new_mac}"
+            fi
+        done
+
+        # Reload sysinfo
+        /usr/bin/sysinfo -u
+        load_sdc_sysinfo
+    fi
+
     # Create aggregations
     create_aggrs
 
@@ -531,7 +564,9 @@ if smf_is_globalzone; then
         exit ${SMF_EXIT_ERR_CONFIG}
     fi
 
-    plumb_admin
+    eval "nic_admin_on_etherstub=\${SYSINFO_Etherstub_${SYSINFO_NIC_admin}_NIC_Names}"
+
+    [[ -z "${nic_admin_on_etherstub}" ]] && plumb_admin
 
     # Prefer the config file for admin nic values, but use
     # bootparams if present
@@ -555,9 +590,15 @@ if smf_is_globalzone; then
         admin_ip6=${BOOT_admin_ip6}
     fi
 
-    if [[ -n "${admin_vlan_id}" && "${admin_vlan_id}" -ne 0 ]]; then
+    if [[ -n "${admin_vlan_id}" ]] || [[ -n "${nic_admin_on_etherstub}" ]]; then
+        if [[ "${admin_vlan_id}" -ne 0 ]]; then
+            admin_vnic_opts="-v ${admin_vlan_id}"
+        else
+            admin_vnic_opts=""
+        fi
+
         admin_iface_active="admin0"
-        dladm create-vnic -l ${SYSINFO_NIC_admin} -v ${admin_vlan_id} ${admin_iface_active}
+        dladm create-vnic -l ${SYSINFO_NIC_admin} $admin_vnic_opts ${admin_iface_active}
         /sbin/ifconfig ${admin_iface_active} plumb
     else
         admin_iface_active="${SYSINFO_NIC_admin}"
@@ -707,7 +748,7 @@ if smf_is_globalzone; then
                     eval "netmask=\${BOOT_${iface}_netmask}"
                     eval "vlan=\${BOOT_${iface}_vlan_id}"
                     eval "macaddr=\${BOOT_${iface}_mac}"
-                    eval "mtu=\${CONFIG_${iface}_mtu}"
+                    eval "mtu=\${BOOT_${iface}_mtu}"
                     echo vnic_up "${link}" "${iface}" "${ip}" "${netmask}" "${vlan}" "${macaddr}" "${mtu}"
                     vnic_up "${link}" "${iface}" "${ip}" "${netmask}" \
                         "${vlan}" "${macaddr}" "" "${mtu}"
@@ -735,7 +776,7 @@ if smf_is_globalzone; then
                     eval "ip=\${BOOT_${iface}_ip6}"
                     eval "vlan=\${BOOT_${iface}_vlan_id}"
                     eval "macaddr=\${BOOT_${iface}_mac}"
-                    eval "mtu=\${CONFIG_${iface}_mtu}"
+                    eval "mtu=\${BOOT_${iface}_mtu}"
                     echo vnic_up6 "${link}" "${iface}" "${ip}" "${vlan}" "${macaddr}" "${mtu}"
                     vnic_up6 "${link}" "${iface}" "${ip}" \
                         "${vlan}" "${macaddr}" "${mtu}"
