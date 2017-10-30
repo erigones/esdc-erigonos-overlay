@@ -992,6 +992,32 @@ END
 fi
 
     cat <<END
+  },
+  "Etherstubs": {
+END
+    printed=0
+    for stub in "${Etherstubs[@]}"; do
+        nicnames_var="Etherstub_${stub}_NIC_Names"
+        eval "nicnames=\${${nicnames_var}}"
+
+        nic_names_array=$(echo "${nicnames}" | sed -e "s/,/\", \"/g")
+        if [[ -n ${nic_names_array} ]]; then
+            nic_names_fmt="\"${nic_names_array}\""
+        else
+            nic_names_fmt=""
+        fi
+
+        ((printed++))
+        trailing_comma=","
+        [[ ${printed} -eq ${#Etherstubs[*]} ]] && trailing_comma=''
+
+        echo -n "    \"${stub}\": {"
+        echo -n "\"NIC Names\": [${nic_names_fmt}]}"
+        echo -n "}"
+        echo "${trailing_comma}"
+    done
+
+    cat <<END
   }
 }
 END

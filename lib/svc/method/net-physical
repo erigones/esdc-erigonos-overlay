@@ -622,6 +622,9 @@ if smf_is_globalzone; then
             for serv in $(echo "${CONFIG_dns_resolvers}" | sed -e "s/,/ /g"); do
                 echo "nameserver ${serv}" >> /etc/resolv.conf
             done
+            if [[ -n "${CONFIG_dns_options}" ]]; then
+                echo "options ${CONFIG_dns_options}" >> /etc/resolv.conf
+            fi
         fi
     else
         if [[ ${headnode} == "true" ]]; then
