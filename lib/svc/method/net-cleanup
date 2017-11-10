@@ -1,0 +1,10 @@
+#!/sbin/sh
+#
+# This is a simple script that cleans up persistent network configuration
+# just after the system boots. This is only required for installation to HDD
+# in order to support network/physical configuration from usbkey/config.
+
+> /etc/dladm/datalink.conf
+> /etc/dladm/flowadm.conf
+> /etc/dladm/flowprop.conf
+> /etc/ipadm/ipadm.conf
