@@ -3,8 +3,10 @@ f root/.profile 0644 root root
 f root/.vimrc 0644 root root
 f root/.bash_profile 0644 root root
 f root/.bashrc 0644 root root
+f lib/svc/manifest/network/network-cleanup.xml 0444 root sys
 f lib/svc/method/fs-joyent 0555 root bin
 f lib/svc/method/fs-root 0555 root bin
+f lib/svc/method/net-cleanup 0555 root sys
 f lib/svc/method/net-physical 0555 root sys
 f lib/svc/method/smartdc-config 0555 root bin
 f lib/svc/method/smartdc-init 0555 root bin
