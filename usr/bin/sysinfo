@@ -217,6 +217,28 @@ function get_vm_capable()
     VM_Capable="true"
 }
 
+function get_setting()
+{
+    local prefix=$1
+    local param=$2
+    local setting
+
+    setting="$(/usr/bin/bootparams 2>/dev/null | grep "${param}" || \
+        grep "${param}" ${configfile} 2>/dev/null)"
+
+    if [[ $? -eq 0 ]]; then
+        eval "${prefix}_${setting}"
+        return 0
+    else
+        return 1
+    fi
+}
+
+function get_vm_settings()
+{
+    get_setting "VM" "vnc_listen_address"
+}
+
 function get_hostname()
 {
     Hostname=$(hostname)
@@ -684,6 +706,7 @@ SKU_Number='${SKU_Number}'
 HW_Version='${HW_Version}'
 HW_Family='${HW_Family}'
 VM_Capable='${VM_Capable}'
+VM_VNC_Listen_Address='${VM_vnc_listen_address}'
 CPU_Type='${CPU_Version}'
 CPU_Virtualization='${CPU_Virtualization}'
 CPU_Physical_Cores=${CPU_Count}
@@ -825,6 +848,7 @@ END
   "HW Family": "${HW_Family}",
   "Setup": "${Setup_complete}",
   "VM Capable": ${VM_Capable},
+  "VM VNC Listen Address": "${VM_vnc_listen_address}",
   "CPU Type": "${CPU_Version}",
   "CPU Virtualization": "${CPU_Virtualization}",
   "CPU Physical Cores": ${CPU_Count},
@@ -1026,6 +1050,7 @@ END
 if [[ ${ZONENAME} == "global" ]]; then
     get_smbios_system_info
     get_vm_capable
+    get_vm_settings
     get_zpool
     get_disks
     get_bootparams
