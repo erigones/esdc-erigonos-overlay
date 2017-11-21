@@ -44,6 +44,9 @@ smf_configure_ip || exit ${SMF_EXIT_OK}
 # Make sure that the libraries essential to this stage of booting can be found.
 LD_LIBRARY_PATH=/lib; export LD_LIBRARY_PATH
 
+# Hard-coded in nictagadm and in other places
+OVERLAY_RULES="/var/run/smartdc/networking/overlay_rules.json"
+
 # Time (in seconds) to wait for admin NIC to get DHCP address before continuing.
 ADMIN_DHCP_TIMEOUT=300
 ActiveAggrLinks=
@@ -529,6 +532,22 @@ if smf_is_globalzone; then
 
     # Make any mtu adjustments that may be necessary
     setup_mtu
+
+    # Create overlay_rules.json
+    config_overlays="$(declare -p | grep "\ CONFIG_overlay_[a-zA-Z0-9_]*[a-zA-Z_]=" | cut -d "_" -f 2- | cut -d "=" -f 1)"
+
+    if [[ -n "${config_overlays}" ]]; then
+        # The overlay configuration folder is placed on swap (does not exist after boot)
+        mkdir -p "$(dirname "${OVERLAY_RULES}")"
+        overlay_rules="{"
+
+        for overlay_name in ${config_overlays}; do
+            eval "overlay_rule=\${CONFIG_${overlay_name}}"
+            overlay_rules="${overlay_rules}\n    \"${overlay_name}\": \"${overlay_rule}\","
+        done
+
+        echo -e "$(echo -e "${overlay_rules}" | sed '$s/,$//')\n}" > "${OVERLAY_RULES}"
+    fi
 
     # Setup admin NIC
 
