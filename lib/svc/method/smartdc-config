@@ -265,6 +265,30 @@ case "$1" in
         chmod 0700 /root/.ssh
     fi
 
+    # Copy private part of root's SSH key
+    if [[ -n "${CONFIG_ssh_private_key_file}" ]] \
+        && [[ -n "${CONFIG_config_inc_dir}" ]] \
+        && [[ -d "${CONFIG_config_inc_dir}" ]] \
+        && [[ -f "${CONFIG_config_inc_dir}/${CONFIG_ssh_private_key_file}" ]]; then
+
+        mkdir -p /root/.ssh
+        cp "${CONFIG_config_inc_dir}/${CONFIG_ssh_private_key_file}" /root/.ssh/id_rsa
+        chmod 0600 /root/.ssh/id_rsa
+        chmod 0700 /root/.ssh
+    fi
+
+    # Copy public part of root's SSH key
+    if [[ -n "${CONFIG_ssh_public_key_file}" ]] \
+        && [[ -n "${CONFIG_config_inc_dir}" ]] \
+        && [[ -d "${CONFIG_config_inc_dir}" ]] \
+        && [[ -f "${CONFIG_config_inc_dir}/${CONFIG_ssh_public_key_file}" ]]; then
+
+        mkdir -p /root/.ssh
+        cp "${CONFIG_config_inc_dir}/${CONFIG_ssh_public_key_file}" /root/.ssh/id_rsa.pub
+        chmod 0644 /root/.ssh/id_rsa.pub
+        chmod 0700 /root/.ssh
+    fi
+
     if [[ -n "${CONFIG_ntp_conf_file}" ]] \
         && [[ -n "${CONFIG_config_inc_dir}" ]] \
         && [[ -d "${CONFIG_config_inc_dir}" ]] \
