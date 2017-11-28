@@ -1036,7 +1036,7 @@ END
         [[ ${printed} -eq ${#Etherstubs[*]} ]] && trailing_comma=''
 
         echo -n "    \"${stub}\": {"
-        echo -n "\"NIC Names\": [${nic_names_fmt}]}"
+        echo -n "\"NIC Names\": [${nic_names_fmt}]"
         echo -n "}"
         echo "${trailing_comma}"
     done
