@@ -534,7 +534,7 @@ if smf_is_globalzone; then
     setup_mtu
 
     # Create overlay_rules.json
-    config_overlays="$(declare -p | grep "\ CONFIG_overlay_[a-zA-Z0-9_]*[a-zA-Z_]=" | cut -d "_" -f 2- | cut -d "=" -f 1)"
+    config_overlays="$(set | grep "^CONFIG_overlay_[a-zA-Z0-9_]*[a-zA-Z_]=" | cut -d "_" -f 3- | cut -d "=" -f 1)"
 
     if [[ -n "${config_overlays}" ]]; then
         # The overlay configuration folder is placed on swap (does not exist after boot)
@@ -542,7 +542,7 @@ if smf_is_globalzone; then
         overlay_rules="{"
 
         for overlay_name in ${config_overlays}; do
-            eval "overlay_rule=\${CONFIG_${overlay_name}}"
+            eval "overlay_rule=\${CONFIG_overlay_${overlay_name}}"
             overlay_rules="${overlay_rules}\n    \"${overlay_name}\": \"${overlay_rule}\","
         done
 
