@@ -546,7 +546,7 @@ if smf_is_globalzone; then
             overlay_rules="${overlay_rules}\n    \"${overlay_name}\": \"${overlay_rule}\","
         done
 
-        echo -e "$(echo -e "${overlay_rules}" | sed '$s/,$//')\n}" > "${OVERLAY_RULES}"
+        echo "$(echo "${overlay_rules}" | sed '$s/,$//')\n}" > "${OVERLAY_RULES}"
     fi
 
     # Setup admin NIC
