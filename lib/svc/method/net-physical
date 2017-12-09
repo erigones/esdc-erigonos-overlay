@@ -502,9 +502,18 @@ if smf_is_globalzone; then
     fi
 
     # Set up etherstubs
-    for stub in $(echo "${CONFIG_etherstub}" | sed -e "s/,/ /g"); do
-        /usr/sbin/dladm create-etherstub -t $stub || echo "ERROR: could not create etherstub ${stub}."
-    done
+    if [[ -n "${CONFIG_etherstub}" ]]; then
+        typeset -a Etherstubs=(${CONFIG_etherstub//,/ })
+
+        for stub in "${Etherstubs[@]}"; do
+            # Must fail on error (etherstubs are part of SYSINFO_Nic_Tags)
+            /usr/sbin/dladm create-etherstub -t $stub
+        done
+
+        # Reload sysinfo (etherstubs are part of SYSINFO_Nic_Tags)
+        /usr/bin/sysinfo -u
+        load_sdc_sysinfo
+    fi
 
     # Change MAC addresses
     if [[ -n "${CONFIG_change_mac}" ]]; then
@@ -532,22 +541,6 @@ if smf_is_globalzone; then
 
     # Make any mtu adjustments that may be necessary
     setup_mtu
-
-    # Create overlay_rules.json
-    config_overlays="$(set | grep "^CONFIG_overlay_[a-zA-Z0-9_]*[a-zA-Z_]=" | cut -d "_" -f 3- | cut -d "=" -f 1)"
-
-    if [[ -n "${config_overlays}" ]]; then
-        # The overlay configuration folder is placed on swap (does not exist after boot)
-        mkdir -p "$(dirname "${OVERLAY_RULES}")"
-        overlay_rules="{"
-
-        for overlay_name in ${config_overlays}; do
-            eval "overlay_rule=\${CONFIG_overlay_${overlay_name}}"
-            overlay_rules="${overlay_rules}\n    \"${overlay_name}\": \"${overlay_rule}\","
-        done
-
-        echo "$(echo "${overlay_rules}" | sed '$s/,$//')\n}" > "${OVERLAY_RULES}"
-    fi
 
     # Setup admin NIC
 
@@ -721,92 +714,6 @@ if smf_is_globalzone; then
     fi
 
     set_default_route
-
-    # Setup extra nics, if specified in the config file
-    nic_tags="${SYSINFO_Nic_Tags}"
-    if [[ -n "${nic_tags}" ]]; then
-        tags=(${nic_tags//,/ })
-
-        if boot_file_config_enabled; then
-            bootparam_ip_keys=""
-            bootparam_ip6_keys=""
-            config_ip_keys=${CONFIG_bootfile_ip_keys//,/ }
-            config_ip6_keys=${CONFIG_bootfile_ip6_keys//,/ }
-        else
-            bootparam_ip_keys=$(sdc_bootparams_keys | grep -- "-ip$" || true)
-            bootparam_ip6_keys=$(sdc_bootparams_keys | grep -- "-ip6$" || true)
-            config_ip_keys=$(sdc_config_keys | grep "_ip$" || true)
-            config_ip6_keys=$(sdc_config_keys | grep "_ip6$" || true)
-        fi
-
-        for tag in "${tags[@]}"; do
-
-            eval "link=\${SYSINFO_NIC_${tag}}"
-            if [[ -z "${link}" ]]; then
-                echo "WARNING: No link found with tag '${tag}'"
-                continue
-            fi
-
-            for key in ${config_ip_keys}; do
-                if [[ ${key} == ${tag}[0-9]_ip ]] || [[ ${key} == ${tag}[0-9][0-9]_ip ]]; then
-                    iface=${key//_ip/}
-                    #echo "   iface=$iface"
-                    eval "ip=\${CONFIG_${iface}_ip}"
-                    eval "netmask=\${CONFIG_${iface}_netmask}"
-                    eval "vlan=\${CONFIG_${iface}_vlan_id}"
-                    eval "macaddr=\${CONFIG_${iface}_mac}"
-                    eval "mtu=\${CONFIG_${iface}_mtu}"
-
-                    echo vnic_up "${link}" "${iface}" "${ip}" "${netmask}" "${vlan}" "${macaddr}" "${mtu}"
-                    vnic_up "${link}" "${iface}" "${ip}" "${netmask}" \
-                        "${vlan}" "${macaddr}" "" "${mtu}"
-                fi
-            done
-
-            for key in ${bootparam_ip_keys}; do
-                if [[ ${key} == ${tag}[0-9]-ip ]] || [[ ${key} == ${tag}[0-9][0-9]-ip ]]; then
-                    iface=${key//-ip/}
-                    eval "ip=\${BOOT_${iface}_ip}"
-                    eval "netmask=\${BOOT_${iface}_netmask}"
-                    eval "vlan=\${BOOT_${iface}_vlan_id}"
-                    eval "macaddr=\${BOOT_${iface}_mac}"
-                    eval "mtu=\${BOOT_${iface}_mtu}"
-                    echo vnic_up "${link}" "${iface}" "${ip}" "${netmask}" "${vlan}" "${macaddr}" "${mtu}"
-                    vnic_up "${link}" "${iface}" "${ip}" "${netmask}" \
-                        "${vlan}" "${macaddr}" "" "${mtu}"
-                fi
-            done
-
-            for key in ${config_ip6_keys}; do
-                if [[ ${key} == ${tag}[0-9]_ip6 ]] || [[ ${key} == ${tag}[0-9][0-9]_ip6 ]]; then
-                    iface=${key//_ip6/}
-                    #echo "   iface=$iface"
-                    eval "ip=\${CONFIG_${iface}_ip6}"
-                    eval "vlan=\${CONFIG_${iface}_vlan_id}"
-                    eval "macaddr=\${CONFIG_${iface}_mac}"
-                    eval "mtu=\${CONFIG_${iface}_mtu}"
-
-                    echo vnic_up6 "${link}" "${iface}" "${ip}" "${vlan}" "${macaddr}" "${mtu}"
-                    vnic_up6 "${link}" "${iface}" "${ip}" \
-                        "${vlan}" "${macaddr}" "${mtu}"
-                fi
-            done
-
-            for key in ${bootparam_ip6_keys}; do
-                if [[ ${key} == ${tag}[0-9]-ip6 ]] || [[ ${key} == ${tag}[0-9][0-9]-ip6 ]]; then
-                    iface=${key//-ip6/}
-                    eval "ip=\${BOOT_${iface}_ip6}"
-                    eval "vlan=\${BOOT_${iface}_vlan_id}"
-                    eval "macaddr=\${BOOT_${iface}_mac}"
-                    eval "mtu=\${BOOT_${iface}_mtu}"
-                    echo vnic_up6 "${link}" "${iface}" "${ip}" "${vlan}" "${macaddr}" "${mtu}"
-                    vnic_up6 "${link}" "${iface}" "${ip}" \
-                        "${vlan}" "${macaddr}" "${mtu}"
-                fi
-            done
-
-        done
-    fi
 else
     # Non-global zones
 

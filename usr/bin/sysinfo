@@ -28,6 +28,7 @@ FORCE=
 PARSABLE=
 UPDATE_ONLY=
 ZSTAT=
+OVERLAY_RULES="/var/run/smartdc/networking/overlay_rules.json"
 
 while getopts fnpu? name
 do
@@ -499,6 +500,39 @@ function get_smartos_network_interfaces()
     #done
 }
 
+function get_smartos_overlay_rules()
+{
+    count=1
+
+    if [[ -f "${OVERLAY_RULES}" ]]; then
+        nic_tag_count=0
+
+        while [[ ${nic_tag_count} -lt ${NicTagCount} ]]; do
+            tag_name=${NicTagNames[${nic_tag_count}]}
+            ((nic_tag_count++))
+
+            overlay_rule=$(json -f "${OVERLAY_RULES}" "${tag_name}")
+
+            if [[ $? -eq 0 && -n "${overlay_rule}" ]]; then
+                OverlayRules[${count}]="${tag_name}"
+                eval "OverlayRule_${tag_name}='${overlay_rule}'"
+                ((count++))
+            fi
+        done
+    fi
+}
+
+function get_smartos_overlays() {
+    count=1
+
+    for line in $(/sbin/dladm show-overlay -f -p -o link,status); do
+        fields=(${line//:/ })
+        Overlays[${count}]="${fields[0]}"
+        eval "Overlay_${fields[0]}='${fields[1]}'"
+        ((count++))
+    done
+}
+
 function get_smartos_vnics()
 {
     count=1
@@ -569,17 +603,18 @@ function get_nic_tags()
 {
     NicTagCount=0
     NicTagList=
-    for line in $(nictagadm list -d '=' -p -L 2>/dev/null); do
+
+    while read line; do
         fields=(${line//=/ })
 
         NicTagNames[${NicTagCount}]=${fields[0]}
         NicTagMacs[${NicTagCount}]=${fields[1]}
         NicTagLinks[${NicTagCount}]=${fields[2]}
 
-        [[ -n $NicTagList ]] && NicTagList=${NicTagList},
+        [[ -n $NicTagList ]] && NicTagList="${NicTagList},"
         NicTagList=${NicTagList}${fields[0]}
         ((NicTagCount++))
-    done
+    done <<< "$(nictagadm list -d '=' -p 2>/dev/null)"
 }
 
 function get_aggr_params()
@@ -788,6 +823,18 @@ END
         nicnames_var="Etherstub_${stub}_NIC_Names"
         eval "nicnames=\${${nicnames_var}}"
         echo "${nicnames_var}='${nicnames}'"
+    done
+
+    for overlay_rule_name in "${OverlayRules[@]}"; do
+        overlay_rule_var="OverlayRule_${overlay_rule_name}"
+        eval "overlay_rule=\${${overlay_rule_var}}"
+        echo "${overlay_rule_var}='${overlay_rule}'"
+    done
+
+    for overlay_name in "${Overlays[@]}"; do
+        overlay_var="Overlay_${overlay_name}"
+        eval "overlay_status=\${${overlay_var}}"
+        echo "${overlay_var}='${overlay_status}'"
     done
 
     for entry in "${Bootparams[@]}"; do
@@ -1042,6 +1089,40 @@ END
     done
 
     cat <<END
+  },
+  "Overlays": {
+END
+    printed=0
+    for overlay in "${Overlays[@]}"; do
+        overlay_var="Overlay_${overlay_name}"
+        eval "overlay_status=\${${overlay_var}}"
+
+        ((printed++))
+        trailing_comma=","
+        [[ ${printed} -eq ${#Overlays[*]} ]] && trailing_comma=""
+
+        echo -n "    \"${overlay}\": \"${overlay_status}\""
+        echo "${trailing_comma}"
+    done
+
+    cat <<END
+  },
+  "Overlay Rules": {
+END
+    printed=0
+    for overlay_rule_name in "${OverlayRules[@]}"; do
+        overlay_rule_var="OverlayRule_${overlay_rule_name}"
+        eval "overlay_rule=\${${overlay_rule_var}}"
+
+        ((printed++))
+        trailing_comma=","
+        [[ ${printed} -eq ${#OverlayRules[*]} ]] && trailing_comma=""
+
+        echo -n "    \"${overlay_rule_name}\": \"${overlay_rule}\""
+        echo "${trailing_comma}"
+    done
+
+    cat <<END
   }
 }
 END
@@ -1071,6 +1152,8 @@ get_aggregation_mappings
 get_overlay_nic_tags
 get_nic_tags
 get_smartos_network_interfaces
+get_smartos_overlay_rules
+get_smartos_overlays
 get_smartos_vnics
 get_smartos_etherstubs
 get_aggr_params

@@ -1,0 +1,447 @@
+#!/usr/bin/ksh93
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+#
+# Copyright (c) 1984, 1986, 1987, 1988, 1989 AT&T. All rights reserved.
+# Copyright (c) 1999, 2010, Oracle and/or its affiliates. All rights reserved.
+# Copyright 2017 Joyent, Inc.
+# Copyright 2017 Erigones, s. r. o.
+#
+
+. /lib/svc/share/smf_include.sh
+. /lib/sdc/config.sh
+. /lib/sdc/network.sh
+
+set -o errexit
+set -o xtrace
+
+# Makes sense only in the global zone
+smf_is_globalzone || exit "${SMF_EXIT_OK}"
+
+# Make sure that the libraries essential to this stage of booting can be found.
+LD_LIBRARY_PATH=/lib; export LD_LIBRARY_PATH
+
+# Hard-coded in nictagadm and in other places
+OVERLAY_RULES="/var/run/smartdc/networking/overlay_rules.json"
+
+typeset -a Etherstubs
+
+
+function log_if_state
+{
+    echo "== debug start: $1 =="
+    if ! /sbin/ifconfig -a; then
+        echo "WARNING: 'ifconfig -a' failed"
+    fi
+    echo "== debug end: $1 =="
+}
+
+function valid_mtu
+{
+    set -o xtrace
+    typeset tag="$1"
+    typeset mtu="$2"
+
+    if ! [[ "${mtu}" =~ [1-9][0-9][0-9][0-9] ]] ; then
+        echo "Invalid mtu specified for tag ${tag}: ${mtu}"
+        echo "Valid MTU range is from 1500-9000"
+        exit "${SMF_EXIT_ERR_FATAL}"
+    fi
+
+    if [[ "${mtu}" -gt 9000 || "${mtu}" -lt 1500 ]]; then
+        echo "Invalid mtu specified for tag ${tag}: ${mtu}"
+        echo "Valid MTU range is from 1500-9000"
+        exit "${SMF_EXIT_ERR_FATAL}"
+    fi
+}
+
+# Creates, plumbs and brings up a vnic with the specified inet parameters
+function vnic_up
+{
+    set -o xtrace
+
+    typeset link="$1"
+    typeset iface="$2"
+    typeset ip="$3"
+    typeset netmask="$4"
+    typeset vlan_id="$5"
+    typeset mac_addr="$6"
+    typeset dhcp_primary="$7"
+    typeset mtu="$8"
+    typeset details=
+    typeset vlan_opt=
+    typeset mac_addr_opt=
+    typeset prop_opt=
+
+    details="link='${link}', iface='${iface}', ip='${ip}', netmask='${netmask}, vlan_id='${vlan_id}'"
+
+    if [[ -z "${link}" ]] || [[ -z "${iface}" ]] || \
+       [[ -z "${ip}" ]] || ([[ ${ip} != "dhcp" ]] && [[ -z "${netmask}" ]]); then
+        echo "WARNING: not bringing up nic (insufficient configuration): ${details}"
+        return
+    fi
+
+    eval "vnic_already_up=\${vnic_${iface}_up}"
+
+    if [[ -n "${vnic_already_up}" ]]; then
+        echo "WARNING: VNIC already up: ${details}"
+        return
+    fi
+
+    echo "Bringing up VNIC: ${details}"
+
+    if [[ -n "${vlan_id}" ]] && [[ "${vlan_id}" -ne 0 ]]; then
+        vlan_opt="-v ${vlan_id}"
+    fi
+
+    if [[ -n "${mac_addr}" ]]; then
+        mac_addr_opt="-m ${mac_addr}"
+    fi
+
+    if [[ -n "${mtu}" ]]; then
+        valid_mtu "${iface}" "${mtu}"
+        prop_opt="-p mtu=${mtu}"
+    fi
+
+    if ! /usr/sbin/dladm create-vnic -t -l "${link}" ${prop_opt} ${vlan_opt} ${mac_addr_opt} "${iface}"; then
+        echo "Failed to create VNIC: ${iface}"
+        exit "${SMF_EXIT_ERR_FATAL}"
+    fi
+
+    if ! /sbin/ifconfig "${iface}" plumb; then
+        echo "Failed to plumb VNIC: ${iface}"
+        exit "${SMF_EXIT_ERR_FATAL}"
+    fi
+
+    if [[ "${ip}" == "dhcp" ]]; then
+        # We ignore errors here because the most common one is that DHCP is already running.
+        if [[ -n "${dhcp_primary}" ]]; then
+            /sbin/ifconfig "${iface}" dhcp primary || /bin/true
+        else
+            /sbin/ifconfig "${iface}" dhcp || /bin/true
+        fi
+    else
+        /sbin/ifconfig "${iface}" inet "${ip}" netmask "${netmask}" up
+    fi
+
+    eval "vnic_${iface}_up=true"
+}
+
+# Creates, plumbs and brings up a vnic with the specified inet6 parameters
+function vnic_up6
+{
+    set -o xtrace
+
+    typeset link="$1"
+    typeset iface="$2"
+    typeset ip="$3"
+    typeset vlan_id="$4"
+    typeset mac_addr="$5"
+    typeset mtu="$6"
+    typeset details=
+    typeset vlan_opt=
+    typeset mac_addr_opt=
+    typeset prop_opt=
+
+    details="link='${link}', iface='${iface}', ip6='${ip}', vlan_id='${vlan_id}'"
+
+    if [[ -z "${link}" ]] || [[ -z "${iface}" ]] || [[ -z "${ip}" ]]; then
+        echo "WARNING: not bringing up nic (insufficient configuration): ${details}"
+        return
+    fi
+
+    # only bring up nic if not already up
+    eval "vnic_already_up=\${vnic_${iface}_up}"
+
+    if [[ -z "${vnic_already_up}" ]]; then
+        echo "Bringing up VNIC: ${details}"
+
+        if [[ -n "${vlan_id}" ]] && [[ "${vlan_id}" -ne 0 ]]; then
+            vlan_opt="-v ${vlan_id}"
+        fi
+
+        if [[ -n "${mac_addr}" ]]; then
+            mac_addr_opt="-m ${mac_addr}"
+        fi
+
+        if [[ -n "${mtu}" ]]; then
+            valid_mtu "${iface}" "${mtu}"
+            prop_opt="-p mtu=${mtu}"
+        fi
+
+        if ! /usr/sbin/dladm create-vnic -t -l "${link}" ${prop_opt} ${vlan_opt} ${mac_addr_opt} "${iface}"; then
+            echo "Failed to create VNIC: ${iface}"
+            exit "${SMF_EXIT_ERR_FATAL}"
+        fi
+    fi
+
+    if ! /sbin/ifconfig "${iface}" inet6 plumb; then
+        echo "Failed to plumb VNIC: ${iface}"
+        exit "${SMF_EXIT_ERR_FATAL}"
+    fi
+
+    if [[ -n "${ip}" ]]; then
+        /sbin/ifconfig "${iface}" inet6 up
+    fi
+
+    if [[ "${ip}" != "addrconf" ]]; then
+        /sbin/ifconfig "${iface}" inet6 addif "${ip}" preferred up
+    fi
+
+    eval "vnic_${iface}_up=true"
+}
+
+function is_etherstub
+{
+    typeset value="$1"
+
+    for stub in "${Etherstubs[@]}"; do
+        if [[ "${stub}" == "${value}" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Retrieve all necessary information about a vnic,
+# make sure its link exists,
+# call vnic_up.
+function setup_vnic
+{
+    set -o xtrace
+    typeset tag="$1"
+    typeset iface="$2"
+    typeset vnic_name="${iface}"
+    typeset config_source="${3:-"CONFIG"}"
+    typeset ip_version="${4:-"4"}"
+    typeset link=
+
+    echo "Configuring VNIC: ${iface} (tag: ${tag})"
+
+    # Find link name for a vnic
+    eval "vxlan_id=\${${config_source}_${iface}_vxlan_id}"
+
+    if [[ -n "${vxlan_id}" ]]; then
+        # We have a vnic on overlay
+        overlay_rule_name="${tag}"
+        link="${overlay_rule_name}${vxlan_id}"
+
+        if [[ ! "${vxlan_id}" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: Invalid overlay VXLAN for VNIC: ${iface}"
+            return 1
+        fi
+
+        # Create the overlay if necessary
+        if dladm show-overlay "${link}" > /dev/null 2>&1; then
+            echo "NOTE: Overlay \"${link}\" already exists for VNIC: ${iface}"
+        else
+            eval "overlay_rule=\${SYSINFO_OverlayRule_${overlay_rule_name}}"
+
+            if [[ -z "${overlay_rule}" ]]; then
+                echo "ERROR: Missing overlay rule \"${overlay_rule_name}\" for VNIC: ${iface}"
+                return 1
+            fi
+
+            echo "NOTE: Creating overlay \"${link}\" for VNIC: ${iface}"
+
+            if ! dladm create-overlay ${overlay_rule} -v "${vxlan_id}" -t "${link}"; then
+                echo "ERROR: Could not create overlay \"${link}\" for VNIC: ${iface}"
+                return 1
+            fi
+        fi
+    elif is_etherstub "${tag}"; then
+        # We have a vnic on etherstub
+        link="${tag}"
+
+        if [[ "${iface}" == "${link}"* ]]; then
+            # Normalize interface name (bar010 -> bar10, foo03 -> foo3)
+            vnic_prefix="$(echo "${link}" | sed 's/\([a-zA-Z_\.-]\)0$/\1/')"
+            vnic_name="${vnic_prefix}${iface:${#link}}"
+        fi
+    else
+        # We have a vnic on normal/aggr interface
+        eval "link=\${SYSINFO_NIC_${tag}}"
+
+        if [[ -z "${link}" ]]; then
+            echo "WARNING: No link found for VNIC: ${iface}"
+            return 0
+        fi
+    fi
+
+    # Get vnic_ip parameters
+    eval "vlan=\${${config_source}_${iface}_vlan_id}"
+    eval "macaddr=\${${config_source}_${iface}_mac}"
+    eval "mtu=\${${config_source}_${iface}_mtu}"
+
+    # Call vnic_up
+    if [[ ${ip_version} == "6" ]]; then
+        eval "ip=\${${config_source}_${iface}_ip6}"
+        netmask=""
+
+        echo vnic_up6 "${link}" "${vnic_name}" "${ip}" "${vlan}" "${macaddr}" "${mtu}"
+        vnic_up6 "${link}" "${vnic_name}" "${ip}" "${vlan}" "${macaddr}" "${mtu}"
+    else
+        eval "ip=\${${config_source}_${iface}_ip}"
+        eval "netmask=\${${config_source}_${iface}_netmask}"
+
+        echo vnic_up "${link}" "${vnic_name}" "${ip}" "${netmask}" "${vlan}" "${macaddr}" "" "${mtu}"
+        vnic_up "${link}" "${vnic_name}" "${ip}" "${netmask}" "${vlan}" "${macaddr}" "" "${mtu}"
+    fi
+}
+
+
+#
+# Create overlay_rules.json
+#
+function create_overlay_rules
+{
+    set -o xtrace
+
+    # Create overlay_rules.json
+    config_overlay_rules="$(sdc_config_keys | grep "^overlay_rule_[a-zA-Z0-9_]*[a-zA-Z_]$" | cut -d "_" -f 3-)"
+
+    if [[ -n "${config_overlay_rules}" ]]; then
+        # The overlay configuration folder is placed on swap (does not exist after boot)
+        mkdir -p "$(dirname "${OVERLAY_RULES}")"
+        overlay_rules="{"
+
+        for overlay_name in ${config_overlay_rules}; do
+            eval "overlay_rule=\${CONFIG_overlay_rule_${overlay_name}}"
+            overlay_rules="${overlay_rules}\n    \"${overlay_name}\": \"${overlay_rule}\","
+        done
+
+        echo "$(echo "${overlay_rules}" | sed '$s/,$//')\n}" > "${OVERLAY_RULES}"
+
+        # Reload sysinfo (overlay rules are part of SYSINFO_Nic_Tags)
+        /usr/bin/sysinfo -u
+        load_sdc_sysinfo
+    fi
+}
+
+#
+# Setup vnics
+#
+function create_vnics
+{
+    set -o xtrace
+
+    nic_tags="${SYSINFO_Nic_Tags}"
+
+    if [[ -z "${nic_tags}" ]]; then
+        return
+    fi
+
+    # VNICs must be created in order depending on their link type
+    # (= VNICs on overlays must go last)
+    typeset -a tags=(${nic_tags//,/ })
+    typeset -a tags_first
+    typeset -a tags_last
+
+    for _tag in "${tags[@]}"; do
+        eval "is_overlay_rule=\${SYSINFO_OverlayRule_${_tag}}"
+
+        if [[ -z "${is_overlay_rule}" ]]; then
+            tags_first+=("${_tag}")
+        else
+            tags_last+=("${_tag}")
+        fi
+    done
+
+    if boot_file_config_enabled; then
+        bootparam_ip_keys=""
+        bootparam_ip6_keys=""
+        config_ip_keys=${CONFIG_bootfile_ip_keys//,/ }
+        config_ip6_keys=${CONFIG_bootfile_ip6_keys//,/ }
+    else
+        bootparam_ip_keys=$(sdc_bootparams_keys | grep -- "-ip$" || true)
+        bootparam_ip6_keys=$(sdc_bootparams_keys | grep -- "-ip6$" || true)
+        config_ip_keys=$(sdc_config_keys | grep "_ip$" || true)
+        config_ip6_keys=$(sdc_config_keys | grep "_ip6$" || true)
+    fi
+
+    for tag in "${tags_first[@]}" "${tags_last[@]}"; do
+        for key in ${config_ip_keys}; do
+            if [[ ${key} == ${tag}[0-9]_ip ]] || [[ ${key} == ${tag}[0-9][0-9]_ip ]]; then
+                iface=${key//_ip/}
+                setup_vnic "${tag}" "${iface}" "CONFIG" "4"
+            fi
+        done
+
+        for key in ${bootparam_ip_keys}; do
+            if [[ ${key} == ${tag}[0-9]-ip ]] || [[ ${key} == ${tag}[0-9][0-9]-ip ]]; then
+                iface=${key//-ip/}
+                setup_vnic "${tag}" "${iface}" "BOOT" "4"
+                fi
+        done
+
+        for key in ${config_ip6_keys}; do
+            if [[ ${key} == ${tag}[0-9]_ip6 ]] || [[ ${key} == ${tag}[0-9][0-9]_ip6 ]]; then
+                iface=${key//_ip6/}
+                setup_vnic "${tag}" "${iface}" "CONFIG" "6"
+            fi
+        done
+
+        for key in ${bootparam_ip6_keys}; do
+            if [[ ${key} == ${tag}[0-9]-ip6 ]] || [[ ${key} == ${tag}[0-9][0-9]-ip6 ]]; then
+                iface=${key//-ip6/}
+                setup_vnic "${tag}" "${iface}" "BOOT" "6"
+            fi
+        done
+
+    done
+}
+
+
+# Load sysinfo variables with SYSINFO_ prefix
+load_sdc_sysinfo
+
+if boot_file_config_enabled; then
+    # We have a boot-time networking file present - use its values rather
+    # than ones from the config file or bootparams
+    if ! boot_file_config_valid; then
+        echo "ERROR: boot-time network config file incorrect"
+        exit "${SMF_EXIT_ERR_CONFIG}"
+    fi
+
+    load_boot_file_config
+    boot_file_config_init
+else
+    # Load config variables with CONFIG_ prefix,
+    # and sets the headnode variable
+    load_sdc_config
+    # Load boot params with BOOT_ prefix
+    load_sdc_bootparams
+fi
+
+if [[ -n "${CONFIG_etherstub}" ]]; then
+    Etherstubs=(${CONFIG_etherstub//,/ })
+else
+    Etherstubs=()
+fi
+
+log_if_state before
+create_overlay_rules
+create_vnics
+log_if_state after
+/usr/bin/sysinfo -u
+
+exit "${SMF_EXIT_OK}"
