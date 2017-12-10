@@ -257,7 +257,7 @@ function setup_vnic
         link="${overlay_rule_name}${vxlan_id}"
 
         if [[ ! "${vxlan_id}" =~ ^[0-9]+$ ]]; then
-            echo "ERROR: Invalid overlay VXLAN for VNIC: ${iface}"
+            echo "ERROR: Invalid overlay VXLAN ID \"${vxlan_id}\" for VNIC: ${iface}"
             return 1
         fi
 
@@ -358,8 +358,8 @@ function create_overlay_rules
 #
 function create_vnics
 {
+    set -o errexit
     set -o xtrace
-    # set -o errexit
 
     nic_tags="${SYSINFO_Nic_Tags}"
 
@@ -407,7 +407,7 @@ function create_vnics
             if [[ ${key} == ${tag}[0-9]-ip ]] || [[ ${key} == ${tag}[0-9][0-9]-ip ]]; then
                 iface=${key//-ip/}
                 setup_vnic "${tag}" "${iface}" "BOOT" "4"
-                fi
+            fi
         done
 
         for key in ${config_ip6_keys}; do
@@ -428,6 +428,8 @@ function create_vnics
 
 function start
 {
+    set -o errexit
+
     log_if_state before
     create_overlay_rules
     create_vnics
@@ -439,6 +441,8 @@ function start
 
 function stop
 {
+    set -o errexit
+
     echo "ERROR: Not implemented" >&2
 
     return "${SMF_EXIT_OK}"
@@ -446,6 +450,8 @@ function stop
 
 function refresh
 {
+    set -o errexit
+
     echo "NOTE: Changing or removing existing VNICs is currently not supported." >&2
     echo "NOTE: Only adding of new VNICs will work." >&2
 
