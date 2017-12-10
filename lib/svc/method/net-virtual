@@ -43,6 +43,7 @@ LD_LIBRARY_PATH=/lib; export LD_LIBRARY_PATH
 OVERLAY_RULES="/var/run/smartdc/networking/overlay_rules.json"
 
 typeset -a Etherstubs
+typeset MODE
 
 
 function log_if_state
@@ -52,6 +53,15 @@ function log_if_state
         echo "WARNING: 'ifconfig -a' failed"
     fi
     echo "== debug end: $1 =="
+}
+
+function load_etherstubs
+{
+    if [[ -n "${CONFIG_etherstub}" ]]; then
+        Etherstubs=(${CONFIG_etherstub//,/ })
+    else
+        Etherstubs=()
+    fi
 }
 
 function valid_mtu
@@ -122,12 +132,12 @@ function vnic_up
     fi
 
     if ! /usr/sbin/dladm create-vnic -t -l "${link}" ${prop_opt} ${vlan_opt} ${mac_addr_opt} "${iface}"; then
-        echo "Failed to create VNIC: ${iface}"
+        echo "ERROR: Failed to create VNIC: ${iface}"
         exit "${SMF_EXIT_ERR_FATAL}"
     fi
 
     if ! /sbin/ifconfig "${iface}" plumb; then
-        echo "Failed to plumb VNIC: ${iface}"
+        echo "ERROR: Failed to plumb VNIC: ${iface}"
         exit "${SMF_EXIT_ERR_FATAL}"
     fi
 
@@ -188,13 +198,13 @@ function vnic_up6
         fi
 
         if ! /usr/sbin/dladm create-vnic -t -l "${link}" ${prop_opt} ${vlan_opt} ${mac_addr_opt} "${iface}"; then
-            echo "Failed to create VNIC: ${iface}"
+            echo "ERROR: Failed to create VNIC: ${iface}"
             exit "${SMF_EXIT_ERR_FATAL}"
         fi
     fi
 
     if ! /sbin/ifconfig "${iface}" inet6 plumb; then
-        echo "Failed to plumb VNIC: ${iface}"
+        echo "ERROR: Failed to plumb VNIC: ${iface}"
         exit "${SMF_EXIT_ERR_FATAL}"
     fi
 
@@ -228,6 +238,7 @@ function is_etherstub
 function setup_vnic
 {
     set -o xtrace
+
     typeset tag="$1"
     typeset iface="$2"
     typeset vnic_name="${iface}"
@@ -250,10 +261,8 @@ function setup_vnic
             return 1
         fi
 
-        # Create the overlay if necessary
-        if dladm show-overlay "${link}" > /dev/null 2>&1; then
-            echo "NOTE: Overlay \"${link}\" already exists for VNIC: ${iface}"
-        else
+        # Create the overlay if necessary (the return code of dladm show-overlay may be misleading)
+        if dladm show-overlay "${link}" 2>&1 | grep "object not found" > /dev/null; then
             eval "overlay_rule=\${SYSINFO_OverlayRule_${overlay_rule_name}}"
 
             if [[ -z "${overlay_rule}" ]]; then
@@ -267,6 +276,8 @@ function setup_vnic
                 echo "ERROR: Could not create overlay \"${link}\" for VNIC: ${iface}"
                 return 1
             fi
+        else
+            echo "NOTE: Overlay \"${link}\" already exists for VNIC: ${iface}"
         fi
     elif is_etherstub "${tag}"; then
         # We have a vnic on etherstub
@@ -285,6 +296,11 @@ function setup_vnic
             echo "WARNING: No link found for VNIC: ${iface}"
             return 0
         fi
+    fi
+
+    if [[ "${MODE}" == "refresh" ]] && dladm show-vnic "${vnic_name}" > /dev/null 2>&1; then
+        echo "WARNING: VNIC \"${vnic_name}\" already exists"
+        return 0
     fi
 
     # Get vnic_ip parameters
@@ -343,6 +359,7 @@ function create_overlay_rules
 function create_vnics
 {
     set -o xtrace
+    # set -o errexit
 
     nic_tags="${SYSINFO_Nic_Tags}"
 
@@ -406,10 +423,40 @@ function create_vnics
                 setup_vnic "${tag}" "${iface}" "BOOT" "6"
             fi
         done
-
     done
 }
 
+function start
+{
+    log_if_state before
+    create_overlay_rules
+    create_vnics
+    log_if_state after
+    /usr/bin/sysinfo -u
+
+    return "${SMF_EXIT_OK}"
+}
+
+function stop
+{
+    echo "ERROR: Not implemented" >&2
+
+    return "${SMF_EXIT_OK}"
+}
+
+function refresh
+{
+    echo "NOTE: Changing or removing existing VNICs is currently not supported." >&2
+    echo "NOTE: Only adding of new VNICs will work." >&2
+
+    start
+
+    return "$?"
+}
+
+####
+# Initialize variables
+####
 
 # Load sysinfo variables with SYSINFO_ prefix
 load_sdc_sysinfo
@@ -432,16 +479,22 @@ else
     load_sdc_bootparams
 fi
 
-if [[ -n "${CONFIG_etherstub}" ]]; then
-    Etherstubs=(${CONFIG_etherstub//,/ })
-else
-    Etherstubs=()
-fi
+load_etherstubs
 
-log_if_state before
-create_overlay_rules
-create_vnics
-log_if_state after
-/usr/bin/sysinfo -u
+####
+# Run
+####
 
-exit "${SMF_EXIT_OK}"
+case "${1}" in
+    start|stop|refresh)
+        MODE="${1}"
+        "${1}"
+        RC="$?"
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|refresh}"
+        RC="${SMF_EXIT_ERR_NOSMF}"
+        ;;
+esac
+
+exit "${RC}"

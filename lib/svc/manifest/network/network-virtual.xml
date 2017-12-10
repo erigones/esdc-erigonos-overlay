@@ -56,7 +56,7 @@
 	<exec_method
 		type='method'
 		name='start'
-		exec='/lib/svc/method/net-virtual'
+		exec='/lib/svc/method/net-virtual start'
 		timeout_seconds='300' />
 
 	<exec_method
@@ -64,6 +64,12 @@
 		name='stop'
 		exec=':true'
 		timeout_seconds='3' />
+
+	<exec_method
+		type='method'
+		name='refresh'
+		exec='/lib/svc/method/net-virtual refresh'
+		timeout_seconds='300' />
 
 	<property_group name='startd' type='framework'>
 		<propval name='duration' type='astring' value='transient' />
