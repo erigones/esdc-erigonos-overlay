@@ -51,6 +51,13 @@
 		<service_fmri value='svc:/network/varpd' />
 	</dependency>
 
+	<dependent
+		name='milestone-network'
+		grouping='optional_all'
+		restart_on='restart'>
+		<service_fmri value='svc:/milestone/network' />
+	</dependent>
+
 	<instance name='default' enabled='true'>
 
 	<exec_method

@@ -26,6 +26,83 @@
 # Copyright 2017 Erigones, s. r. o.
 #
 
+#
+# This script is responsible for creating VNICs (dladm create-vnic) based on
+# configuration in /usbkey/config or provided via boot parameters. It can also
+# create (replace) the overlay_rules.json file. Overlays are created only
+# if a VNIC is configured to be over an overlay. Etherstubs are created in
+# network/physical.
+#
+# It also supports creating of new VNICs added to /usbkey/config on a running
+# system via the `refresh` parameter. However, the refresh functionality is
+# currently limited to configuration of VNICs that do not exist in the OS yet.
+#
+
+#### EXAMPLE /usbkey/config entries:
+##
+#### Create etherstubs (performed in network/physical)
+#### (comma-separated list)
+##
+## etherstub=foo0,bar1,test30
+##
+##
+#### Create /var/run/smartdc/networking/overlay_rules.json
+##
+## overlay_rule_spam="-e vxlan -p vxlan/listen_ip=0.0.0.0,vxlan/listen_port=5000 \
+##    -s direct -p direct/dest_ip=10.20.30.40 -p direct/dest_port=4444 -p mtu=1400"
+## overlay_rule_ham_eggs="-e vxlan -p vxlan/listen_ip=0.0.0.0,vxlan/listen_port=4795 \
+##    -s files -p files/config=/var/db/ham_eggs.json -p mtu=1400"
+##
+##
+#### VNICs over normal physical interfaces or aggregation
+#### nic_tag=foobar
+##
+## foobar_nic=11:22:33:aa:bb:cc
+#### Or foobar_nic=aggr0 for VNIC/nic_tag over aggregation inteface named `aggr0`
+## foobar0_ip=192.168.11.22
+## foobar0_netmask=255.255.255.0
+## foobar0_vlan_id=...
+## foobar0_mac=...
+## foobar0_mtu=...
+##
+##
+#### VNICs on etherstubs
+#### The etherstub name must be listed in the `etherstub=` setting (see above)
+#### nic_tag=<etherstub-name>
+##
+## test30_0_ip=172.16.33.44
+## test30_0_netmask=255.255.240.0
+## test30_0_vlan_id=...
+## test30_0_mac=...
+## test30_0_mtu=...
+##
+##
+#### VNICs on overlays
+#### There must be an `overlay_rule=` setting for the overlay rule (see above)
+#### nic_tag=<overlay rule name>
+##
+## ham_eggs_0_vxlan_id=1234
+## ham_eggs_0_ip=10.55.66.77
+## ham_eggs_0_netmask=255.255.0.0
+## ham_eggs_0_vlan_id=...
+## ham_eggs_0_mac=...
+## ham_eggs_0_mtu=...
+
+#######################################
+# The /usbkey/config entries are based on the following pattern:
+#
+# <nic_tag>_<integer:vnic-suffix>_ip=
+# <nic_tag>_<integer:vnic-suffix>_netmask=
+# ... and so on ...
+#
+# + VNICs on normal and aggregation interfaces require <nic_tag>_nic=
+# + VNICs on overlays require <nic_tag>_<integer:vnic-suffix>_vxlan_id=
+#
+# NOTE: The <nic_tag>_<integer:vnic-suffix> format is preferred.
+#       (note the underscore)
+#
+#######################################
+
 . /lib/svc/share/smf_include.sh
 . /lib/sdc/config.sh
 . /lib/sdc/network.sh
@@ -42,7 +119,6 @@ LD_LIBRARY_PATH=/lib; export LD_LIBRARY_PATH
 # Hard-coded in nictagadm and in other places
 OVERLAY_RULES="/var/run/smartdc/networking/overlay_rules.json"
 
-typeset -a Etherstubs
 typeset MODE
 
 
@@ -53,15 +129,6 @@ function log_if_state
         echo "WARNING: 'ifconfig -a' failed"
     fi
     echo "== debug end: $1 =="
-}
-
-function load_etherstubs
-{
-    if [[ -n "${CONFIG_etherstub}" ]]; then
-        Etherstubs=(${CONFIG_etherstub//,/ })
-    else
-        Etherstubs=()
-    fi
 }
 
 function valid_mtu
@@ -219,19 +286,6 @@ function vnic_up6
     eval "vnic_${iface}_up=true"
 }
 
-function is_etherstub
-{
-    typeset value="$1"
-
-    for stub in "${Etherstubs[@]}"; do
-        if [[ "${stub}" == "${value}" ]]; then
-            return 0
-        fi
-    done
-
-    return 1
-}
-
 # Retrieve all necessary information about a vnic,
 # make sure its link exists,
 # call vnic_up.
@@ -254,10 +308,16 @@ function setup_vnic
     if [[ -n "${vxlan_id}" ]]; then
         # We have a vnic on overlay
         overlay_rule_name="${tag}"
-        link="${overlay_rule_name}${vxlan_id}"
 
         if [[ ! "${vxlan_id}" =~ ^[0-9]+$ ]]; then
             echo "ERROR: Invalid overlay VXLAN ID \"${vxlan_id}\" for VNIC: ${iface}"
+            return 1
+        fi
+
+        link="${overlay_rule_name}${vxlan_id}"
+
+        if [[ "${link}" == "${vnic_name}" ]]; then
+            echo "ERROR: Overlay name is the same as VNIC name: ${link}"
             return 1
         fi
 
@@ -279,11 +339,11 @@ function setup_vnic
         else
             echo "NOTE: Overlay \"${link}\" already exists for VNIC: ${iface}"
         fi
-    elif is_etherstub "${tag}"; then
-        # We have a vnic on etherstub
+    elif [[ "${tag}" =~ [0-9]$ ]]; then
+        # We have a vnic on etherstub (tag ends with a number)
         link="${tag}"
 
-        if [[ "${iface}" == "${link}"* ]]; then
+        if [[ "${iface}" =~ ^${link}[0-9]+$ ]]; then
             # Normalize interface name (bar010 -> bar10, foo03 -> foo3)
             vnic_prefix="$(echo "${link}" | sed 's/\([a-zA-Z_\.-]\)0$/\1/')"
             vnic_name="${vnic_prefix}${iface:${#link}}"
@@ -298,6 +358,7 @@ function setup_vnic
         fi
     fi
 
+    # This is the only difference between start and refresh
     if [[ "${MODE}" == "refresh" ]] && dladm show-vnic "${vnic_name}" > /dev/null 2>&1; then
         echo "WARNING: VNIC \"${vnic_name}\" already exists"
         return 0
@@ -397,29 +458,29 @@ function create_vnics
 
     for tag in "${tags_first[@]}" "${tags_last[@]}"; do
         for key in ${config_ip_keys}; do
-            if [[ ${key} == ${tag}[0-9]_ip ]] || [[ ${key} == ${tag}[0-9][0-9]_ip ]]; then
-                iface=${key//_ip/}
+            if [[ "${key}" =~ ^${tag}_?[0-9]+_ip$ ]]; then
+                iface="${key//_ip/}"
                 setup_vnic "${tag}" "${iface}" "CONFIG" "4"
             fi
         done
 
         for key in ${bootparam_ip_keys}; do
-            if [[ ${key} == ${tag}[0-9]-ip ]] || [[ ${key} == ${tag}[0-9][0-9]-ip ]]; then
-                iface=${key//-ip/}
+            if [[ "${key}" =~ ^${tag}_?[0-9]+-ip$ ]]; then
+                iface="${key//-ip/}"
                 setup_vnic "${tag}" "${iface}" "BOOT" "4"
             fi
         done
 
         for key in ${config_ip6_keys}; do
-            if [[ ${key} == ${tag}[0-9]_ip6 ]] || [[ ${key} == ${tag}[0-9][0-9]_ip6 ]]; then
-                iface=${key//_ip6/}
+            if [[ "${key}" =~ ^${tag}_?[0-9]+_ip6$ ]]; then
+                iface="${key//_ip6/}"
                 setup_vnic "${tag}" "${iface}" "CONFIG" "6"
             fi
         done
 
         for key in ${bootparam_ip6_keys}; do
-            if [[ ${key} == ${tag}[0-9]-ip6 ]] || [[ ${key} == ${tag}[0-9][0-9]-ip6 ]]; then
-                iface=${key//-ip6/}
+            if [[ "${key}" =~ ^${tag}_?[0-9]+-ip6$ ]]; then
+                iface="${key//-ip6/}"
                 setup_vnic "${tag}" "${iface}" "BOOT" "6"
             fi
         done
@@ -485,8 +546,6 @@ else
     load_sdc_bootparams
 fi
 
-load_etherstubs
-
 ####
 # Run
 ####
@@ -495,12 +554,10 @@ case "${1}" in
     start|stop|refresh)
         MODE="${1}"
         "${1}"
-        RC="$?"
+        exit "$?"
         ;;
     *)
         echo "Usage: $0 {start|stop|refresh}"
-        RC="${SMF_EXIT_ERR_NOSMF}"
+        exit "${SMF_EXIT_ERR_NOSMF}"
         ;;
 esac
-
-exit "${RC}"
