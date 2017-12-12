@@ -80,6 +80,7 @@
 
 	<property_group name='startd' type='framework'>
 		<propval name='duration' type='astring' value='transient' />
+		<propval name='critical_failure_count' type='integer' value='1'/>
 	</property_group>
 
 	<template>

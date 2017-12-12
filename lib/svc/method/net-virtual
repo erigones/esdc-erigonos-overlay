@@ -98,8 +98,8 @@
 # + VNICs on normal and aggregation interfaces require <nic_tag>_nic=
 # + VNICs on overlays require <nic_tag>_<integer:vnic-suffix>_vxlan_id=
 #
-# NOTE: The <nic_tag>_<integer:vnic-suffix> format is preferred.
-#       (note the underscore)
+# NOTE: The <nic_tag>_<integer:vnic-suffix> format is preferred for VNICs over
+#       etherstub and overlay links (note the underscore).
 #
 #######################################
 
