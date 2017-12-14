@@ -28,10 +28,17 @@
 
 #
 # This script is responsible for creating VNICs (dladm create-vnic) based on
-# configuration in /usbkey/config or provided via boot parameters. It can also
-# create (replace) the overlay_rules.json file. Overlays are created only
-# if a VNIC is configured to be over an overlay. Etherstubs are created in
-# network/physical.
+# configuration in /usbkey/config or provided via boot parameters. It will
+# create all VNICs defined by `<nic_tag>_<vnic-suffix_integer>_ip` entries in
+# the config file or `<nic_tag>_<vnic-suffix_integer>-ip` boot parameters.
+# VNICs defined by `admin_ip` and `external_ip` statements are still managed
+# by network/physical.
+#
+# Etherstubs are also created in network/physical.
+#
+# This script can create (replace) the overlay_rules.json file. Overlays are
+# created only if an underlying link of a VNIC is an overlay (detected by
+# `<nic_tag>_<vnic-suffix_integer>_vxlan_id`).
 #
 # It also supports creating of new VNICs added to /usbkey/config on a running
 # system via the `refresh` parameter. However, the refresh functionality is
@@ -91,14 +98,14 @@
 #######################################
 # The /usbkey/config entries are based on the following pattern:
 #
-# <nic_tag>_<integer:vnic-suffix>_ip=
-# <nic_tag>_<integer:vnic-suffix>_netmask=
+# <nic_tag>_<vnic-suffix_integer>_ip=
+# <nic_tag>_<vnic-suffix_integer>_netmask=
 # ... and so on ...
 #
 # + VNICs on normal and aggregation interfaces require <nic_tag>_nic=
-# + VNICs on overlays require <nic_tag>_<integer:vnic-suffix>_vxlan_id=
+# + VNICs on overlays require <nic_tag>_<vnic-suffix_integer>_vxlan_id=
 #
-# NOTE: The <nic_tag>_<integer:vnic-suffix> format is preferred for VNICs over
+# NOTE: The <nic_tag>_<vnic-suffix_integer> format is preferred for VNICs over
 #       etherstub and overlay links (note the underscore).
 #
 #######################################
@@ -504,7 +511,7 @@ function stop
 {
     set -o errexit
 
-    echo "ERROR: Not implemented" >&2
+    echo "WARNING: Not implemented" >&2
 
     return "${SMF_EXIT_OK}"
 }
@@ -553,7 +560,7 @@ fi
 case "${1}" in
     start|stop|refresh)
         MODE="${1}"
-        "${1}"
+        "${MODE}"
         exit "$?"
         ;;
     *)
