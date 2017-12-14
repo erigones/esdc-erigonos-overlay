@@ -404,7 +404,7 @@ function create_overlay_rules
     config_overlay_rules="$(sdc_config_keys | grep "^overlay_rule_[a-zA-Z0-9_]*[a-zA-Z_]$" | cut -d "_" -f 3-)"
 
     if [[ -n "${config_overlay_rules}" ]]; then
-        # The overlay configuration folder is placed on swap (does not exist after boot)
+        # The overlay configuration folder is placed on ramdisk (does not exist after boot)
         mkdir -p "$(dirname "${OVERLAY_RULES}")"
         overlay_rules="{"
 
