@@ -52,10 +52,87 @@
 	</dependency>
 
 	<dependent
+		name='routing-setup'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/network/routing-setup' />
+	</dependent>
+
+	<dependent
+		name='ipfilter'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/network/ipfilter' />
+	</dependent>
+
+	<dependent
+		name='lldpd-server'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/network/lldp/server' />
+	</dependent>
+
+	<dependent
+		name='dns-multicast'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/network/dns/multicast' />
+	</dependent>
+
+	<dependent
+		name='ibd-post-upgrade'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/network/ibd-post-upgrade' />
+	</dependent>
+
+	<dependent
+		name='location'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/network/location' />
+	</dependent>
+
+	<dependent
+		name='iptun'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/network/iptun' />
+	</dependent>
+
+	<dependent
+		name='ssh'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/network/ssh' />
+	</dependent>
+
+	<dependent
+		name='vrrp'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/network/vrrp' />
+	</dependent>
+
+	<dependent
 		name='milestone-network'
 		grouping='optional_all'
 		restart_on='restart'>
 		<service_fmri value='svc:/milestone/network' />
+	</dependent>
+
+	<dependent
+		name='smartdc-init'
+		grouping='require_all'
+		restart_on='none'>
+		<service_fmri value='svc:/system/smartdc/init' />
+	</dependent>
+
+	<dependent
+		name='identity'
+		grouping='optional_all'
+		restart_on='none'>
+		<service_fmri value='svc:/system/identity' />
 	</dependent>
 
 	<instance name='default' enabled='true'>
@@ -102,3 +179,4 @@
 </service>
 
 </service_bundle>
+
