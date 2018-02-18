@@ -12,7 +12,7 @@
 
 #
 # Copyright 2016 Joyent, Inc.
-# Copyright 2017 Erigones, s. r. o.
+# Copyright 2018 Erigones, s. r. o.
 #
 
 export PS4='[\D{%FT%TZ}] ${BASH_SOURCE}:${LINENO}: ${FUNCNAME[0]:+${FUNCNAME[0]}(): }'
@@ -508,9 +508,9 @@ case "$1" in
     configure_fwadm
     configure_vmadm
 
-    if /bin/bootparams | egrep "^(headnode=true|computenode=true)" > /dev/null 2>&1; then
+    if [[ "${USBMOUNT}" == "/mnt"* ]]; then
         # Unmount only if running from live image
-        [ ${BOOTED_FROM_HDD} -eq 0 ] && /usr/sbin/umount $USBMOUNT
+        [ ${BOOTED_FROM_HDD} -eq 0 ] && /usr/sbin/umount "${USBMOUNT}"
     fi
 
     ;;
