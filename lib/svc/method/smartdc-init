@@ -409,27 +409,26 @@ case "$1" in
     # Always setup socket filter no matter what happens next.
     /sbin/soconfig -F datafilt datafilt prog '2:2:0,2:2:6,26:2:0,26:2:6'
 
-    USBMOUNT=
-
     # If we're not importing the pools, we shouldn't try to setup as a headnode
     # (since there'll be no zpool)
     if /bin/bootparams | grep "^noimport=true" > /dev/null 2>&1; then
         exit $SMF_EXIT_OK
     fi
 
+    USB_PATH="/$(svcprop -p joyentfs/usb_copy_path svc:/system/filesystem/smartdc:default)"
+    USBMOUNT="/mnt/$(svcprop -p joyentfs/usb_mountpoint svc:/system/filesystem/smartdc:default)"
+
     # We want to run
     if /bin/bootparams | egrep "^(headnode=true|computenode=true)" > /dev/null 2>&1; then
         if [[ -n $(/bin/bootparams | grep "^headnode=true") && ${BOOTED_FROM_HDD} -eq 0 ]]; then
-            USBMOUNT=/mnt/`svcprop -p joyentfs/usb_mountpoint svc:/system/filesystem/smartdc:default`
-        else
-            USBMOUNT=/`svcprop -p joyentfs/usb_copy_path svc:/system/filesystem/smartdc:default`
+            USB_PATH="${USBMOUNT}"
         fi
 
-	# No config file (e.g. user quit during interactive configuration), so
-	# treat as if "noimport=true".
-	[[ ! -f $USBMOUNT/config ]] && exit $SMF_EXIT_OK
+        # No config file (e.g. user quit during interactive configuration), so
+        # treat as if "noimport=true".
+        [[ ! -f "${USB_PATH}/config" ]] && exit $SMF_EXIT_OK
 
-        initial_script=${USBMOUNT}/$(grep "^initial_script=" $USBMOUNT/config.inc/generic 2>/dev/null | cut -d'=' -f2-)
+        initial_script=${USB_PATH}/$(grep "^initial_script=" "${USB_PATH}/config.inc/generic" 2>/dev/null | cut -d'=' -f2-)
         if [ -n ${initial_script} ] && [ -e ${initial_script} ]; then
             # Execute the script
             ${initial_script}
@@ -447,7 +446,7 @@ case "$1" in
     if /bin/bootparams | grep "^smartos=true" > /dev/null 2>&1; then
         set_default_fw_rules
     else
-	install_config
+        install_config
 
         # If this CN was running 6.5.x and has now been booted onto 7.0, we
         # need to uninstall the old 6.5.x agents and install the new 7.0 agents.
@@ -508,9 +507,9 @@ case "$1" in
     configure_fwadm
     configure_vmadm
 
-    if [[ "${USBMOUNT}" == "/mnt"* ]]; then
-        # Unmount only if running from live image
-        [ ${BOOTED_FROM_HDD} -eq 0 ] && /usr/sbin/umount "${USBMOUNT}"
+    # Unmount only if running from live image
+    if [[ ${BOOTED_FROM_HDD} -eq 0 ]]; then
+        /usr/sbin/umount "${USBMOUNT}"
     fi
 
     ;;
