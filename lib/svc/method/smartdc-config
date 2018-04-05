@@ -181,6 +181,7 @@ case "$1" in
     # If we're a headnode, see if we have to do interactive configuration.
     if /bin/bootparams | grep "^headnode=true" > /dev/null 2>&1; then
         USB_PATH=/mnt/`svcprop -p "joyentfs/usb_mountpoint" svc:/system/filesystem/smartdc:default`
+        USBMOUNT=/mnt/`svcprop -p "joyentfs/usb_mountpoint" svc:/system/filesystem/smartdc:default`
 
         # Check for config and run interactive if it doesn't exist.
         if [[ ! -f ${USB_PATH}/config ]]; then
@@ -189,10 +190,24 @@ case "$1" in
                 exit $SMF_EXIT_OK
             fi
 
-            /smartdc/lib/sdc-on-tty -d /dev/console \
-                ${USB_PATH}/scripts/prompt-config.sh "${USB_PATH}"
+            if /bin/bootparams | grep "^netboot_install_script=" > /dev/null 2>&1; then
+                if ! netboot_config; then
+                    exit ${SMF_EXIT_ERR_CONFIG}
+                fi
+            else
+                if [[ -f "${USBMOUNT}/scripts/prompt-config.sh" ]]; then
+                    USB_PATH="${USBMOUNT}"
+                    prompt_config="${USBMOUNT}/scripts/prompt-config.sh"
+                elif [[ -f "${USB_PATH}/scripts/prompt-config.sh" ]]; then
+                    prompt_config="${USB_PATH}/scripts/prompt-config.sh"
+                else
+                    prompt_config="/smartdc/lib/smartos_prompt_config.sh"
+                fi
 
-            # If user quit from interactive configuration then we're done.
+                /smartdc/lib/sdc-on-tty -d /dev/console \
+                    "${prompt_config}" "${USB_PATH}"
+            fi
+
             [[ ! -f ${USB_PATH}/config ]] && exit $SMF_EXIT_OK
         fi
     elif /bin/bootparams | grep "^smartos=true" > /dev/null 2>&1; then
