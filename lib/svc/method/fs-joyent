@@ -11,8 +11,8 @@
 #
 
 #
-# Copyright (c) 2017, Joyent, Inc.
-# Copyright (c) 2017, Erigones, s. r. o.
+# Copyright (c) 2018, Joyent, Inc.
+# Copyright (c) 2019, Erigones, s. r. o.
 #
 
 set -o xtrace
@@ -201,9 +201,16 @@ if [ $? -ne 0 ]; then
         fi
     fi
 
-    # For the system zpool, mount and configure all system datasets
-    zpool status -v ${SYS_ZPOOL}
+    # Capture the zpool's status output in the method's log file for
+    # troubleshooting.
+    #
+    # Note: It is critical that we do not run 'status -v'. If there are errors
+    # in the zpool error log and the zpool is large (e.g. > 200TB), then the
+    # lookup for the error file names can take a very long time (several hours).
+    # This would block the system boot until it completed.
+    zpool status ${SYS_ZPOOL}
     if [ $? -eq 0 ]; then
+
         # Stash the SUNWdefault.xml file so we can update the
         # persistent version after mounting zones/config.
         cp /etc/zones/SUNWdefault.xml /tmp/
