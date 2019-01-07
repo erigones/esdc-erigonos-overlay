@@ -23,7 +23,7 @@
 # Copyright (c) 1984, 1986, 1987, 1988, 1989 AT&T. All rights reserved.
 # Copyright (c) 1999, 2010, Oracle and/or its affiliates. All rights reserved.
 # Copyright 2017 Joyent, Inc.
-# Copyright 2017 Erigones, s. r. o.
+# Copyright 2019 Erigones, s. r. o.
 #
 
 . /lib/svc/share/smf_include.sh
@@ -79,6 +79,7 @@ function log_if_state
 {
     set -o xtrace
     echo "== debug start: $1 =="
+    nictagadm list
     if ! /usr/sbin/dladm show-phys; then
         echo "WARNING: 'dladm show-phys' failed"
     fi
@@ -543,6 +544,7 @@ if smf_is_globalzone; then
     setup_mtu
 
     # Setup admin NIC
+    ADMIN_NIC_TAG=${CONFIG_admin_tag:-"admin"}
 
     # If there is no NIC with the admin tag, and the config has
     # admin_nic_autoselect=true, designate the first NIC reported
@@ -550,14 +552,14 @@ if smf_is_globalzone; then
     # the NICs are known to change beneath us.
     if [[ "${BOOT_smartos}" == "true" ]] && \
         [[ "${CONFIG_admin_nic_autoselect}" == "true" ]] && \
-        ! nictagadm exists admin ; then
+        ! nictagadm exists $ADMIN_NIC_TAG ; then
         autoselected_admin_nic=$(dladm show-phys -m -p -o address | head -n1)
         if [[ -z ${autoselected_admin_nic} ]] ; then
             echo "ERROR: no NICs found, unable to autoselect admin NIC."
             exit ${SMF_EXIT_ERR_CONFIG}
         fi
 
-        nictagadm add admin "${autoselected_admin_nic}"
+        nictagadm add $ADMIN_NIC_TAG "${autoselected_admin_nic}"
         if [[ $? -ne 0 ]] ; then
             echo "ERROR: unable to add admin tag to NIC ${autoselected_admin_nic}"
             exit ${SMF_EXIT_ERR_FATAL}
@@ -569,6 +571,19 @@ if smf_is_globalzone; then
         fi
 
         nictagadm list
+    elif [[ -v CONFIG_admin_tag ]]; then
+        #
+        # This handles the case when the 'admin_tag' property is set to
+        # override the default admin nic tag.
+        #
+        eval SYSINFO_NIC_admin='$'SYSINFO_NIC_${CONFIG_admin_tag}
+
+        eval CONFIG_admin_ip='$'CONFIG_${CONFIG_admin_tag}_ip
+        eval CONFIG_admin_ip6='$'CONFIG_${CONFIG_admin_tag}_ip6
+        eval CONFIG_admin_netmask='$'CONFIG_${CONFIG_admin_tag}_netmask
+        eval CONFIG_admin_mtu='$'CONFIG_${CONFIG_admin_tag}_mtu
+        eval CONFIG_admin_gateway='$'CONFIG_${CONFIG_admin_tag}_gateway
+        eval CONFIG_admin_gateway6='$'CONFIG_${CONFIG_admin_tag}_gateway6
     fi
 
     if [[ -z "${SYSINFO_NIC_admin}" ]]; then
