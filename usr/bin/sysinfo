@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Copyright (c) 2015 Joyent Inc., All rights reserved.
-# Copyright (c) 2017 Erigones, s. r. o., All rights reserved.
+# Copyright (c) 2018 Joyent Inc., All rights reserved.
+# Copyright (c) 2019 Erigones, s. r. o., All rights reserved.
 #
 # Output some info representing the system.  Default: JSON
 #
@@ -105,14 +105,24 @@ function get_smbios_system_info()
 {
     # This puts the variables we're pulling out into the local environment
     eval $(smbios -t SMB_TYPE_SYSTEM | tr -d "\"" \
-        | egrep "Manufacturer: |Product: |Serial Number: |UUID: |SKU Number: |Version: |Family: " \
+        | egrep "Manufacturer: |Product: |Serial Number: |UUID \(Endian-corrected\): |UUID: |SKU Number: |Version: |Family: " \
         | sed -e 's/^ *//' \
         -e 's/: /="/' \
         -e 's/ *$/"/' \
         -e 's/Serial Number/Serial_Number/' \
         -e 's/SKU Number/SKU_Number/' \
         -e 's/Version/HW_Version/' \
-        -e 's/Family/HW_Family/')
+        -e 's/Family/HW_Family/' \
+        -e 's/UUID (Endian-corrected)/Fixed_UUID/')
+
+    vendor=$(smbios -t SMB_TYPE_BIOS | grep "Vendor: " \
+        | sed -e 's/^.*Vendor: //;s/ *$//')
+
+    # If we are a bhyve guest, we can use the correct UUID format; otherwise we
+    # use the network-endian one for compatibility reasons.
+    if [ "$vendor" = "BHYVE" -a -n "$Fixed_UUID" ]; then
+        UUID=$Fixed_UUID
+    fi
 
     # overwrite UUID if config dictates otherwise
     tmp_uuid=$(/usr/bin/bootparams | grep "^override_uuid=" | cut -f2 -d'=')
@@ -197,6 +207,24 @@ function get_smartos_cpu_info()
     #echo "${CPU_Version}"
     #echo "${CPU_Count}"
     #echo "${CPU_Cores}"
+}
+
+function get_bhyve_capability()
+{
+    Bhyve_Capable="false"
+    Bhyve_Max_Vcpus="0"
+    HVM_API="false"
+
+    if [[ -x /usr/lib/brand/bhyve/bhhwcompat ]]; then
+        if /usr/lib/brand/bhyve/bhhwcompat; then
+            Bhyve_Capable="true"
+            vcpus=$(/usr/lib/brand/bhyve/bhhwcompat -c | /usr/bin/grep "^[0-9]*$")
+            if [[ -n ${vcpus} ]]; then
+                Bhyve_Max_Vcpus=${vcpus}
+            fi
+            HVM_API="true"
+        fi
+    fi
 }
 
 function get_live_image_buildstamp()
@@ -599,6 +627,26 @@ function get_overlay_nic_tags()
     fi
 }
 
+# Default to Admin_NIC_Tag of "admin"
+function get_admin_nic_tag()
+{
+    prop=$(net_conf_grep "^admin_tag=")
+    fields=(${prop//=/ })
+    eval "Admin_NIC_Tag=${fields[1]:-"admin"}"
+}
+
+function get_admin_ip()
+{
+    # In case get_admin_nic_tag hasn't been called yet.
+    [[ -z "$Admin_NIC_Tag" ]] && get_admin_nic_tag
+
+    # If we are still missing the "Admin_NIC_Tag" default to "admin"
+    tag=${Admin_NIC_Tag:-"admin"}
+    prop=$(net_conf_grep "^${tag}_ip=")
+    fields=(${prop//=/ })
+    eval "Admin_IP=${fields[1]}"
+}
+
 function get_nic_tags()
 {
     NicTagCount=0
@@ -745,7 +793,12 @@ VM_VNC_Listen_Address='${VM_vnc_listen_address}'
 CPU_Type='${CPU_Version}'
 CPU_Virtualization='${CPU_Virtualization}'
 CPU_Physical_Cores=${CPU_Count}
+Bhyve_Capable='${Bhyve_Capable}'
+Bhyve_Max_Vcpus=${Bhyve_Max_Vcpus}
+HVM_API='${HVM_API}'
 Nic_Tags=${NicTagList}
+Admin_NIC_Tag=${Admin_NIC_Tag}
+Admin_IP=${Admin_IP}
 Setup='${Setup_complete}'
 END
     else
@@ -896,9 +949,14 @@ END
   "Setup": "${Setup_complete}",
   "VM Capable": ${VM_Capable},
   "VM VNC Listen Address": "${VM_vnc_listen_address}",
+  "Bhyve Capable": ${Bhyve_Capable},
+  "Bhyve Max Vcpus": ${Bhyve_Max_Vcpus},
+  "HVM API": ${HVM_API},
   "CPU Type": "${CPU_Version}",
   "CPU Virtualization": "${CPU_Virtualization}",
   "CPU Physical Cores": ${CPU_Count},
+  "Admin NIC Tag": "${Admin_NIC_Tag}",
+  "Admin IP": "${Admin_IP}",
 END
     else
         echo "  \"ZFS Quota\": \"${QUOTA}\","
@@ -1145,11 +1203,14 @@ else
 fi
 get_memory_mib
 get_smartos_cpu_info
+get_bhyve_capability
 get_live_image_buildstamp
 get_system_type
 get_hostname
 get_aggregation_mappings
 get_overlay_nic_tags
+get_admin_nic_tag
+get_admin_ip
 get_nic_tags
 get_smartos_network_interfaces
 get_smartos_overlay_rules
