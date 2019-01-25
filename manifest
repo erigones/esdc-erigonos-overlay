@@ -20,7 +20,6 @@ f usr/bin/sysinfo 0555 root bin
 f usr/sbin/set-root-password 0755 root bin
 f usr/sbin/opensnoop 0755 root bin
 f usr/sbin/execsnoop 0755 root bin
-f usr/vm/node_modules/VM.js 0444 root bin
 f etc/driver_aliases 0644 root sys
 f etc/issue 0644 root sys
 f etc/motd 0644 root sys
