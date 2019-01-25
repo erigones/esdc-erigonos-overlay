@@ -5,9 +5,9 @@ f root/.bash_profile 0644 root root
 f root/.bashrc 0644 root root
 f lib/svc/manifest/network/network-cleanup.xml 0444 root sys
 f lib/svc/manifest/network/network-virtual.xml 0444 root sys
-f lib/svc/manifest/rc-post-vmadmd.xml 0444 root sys
-f lib/svc/manifest/rc-pre-network.xml 0444 root sys
-f lib/svc/manifest/rc-pre-vmadmd.xml 0444 root sys
+f lib/svc/manifest/site/rc-post-vmadmd.xml 0444 root sys
+f lib/svc/manifest/site/rc-pre-network.xml 0444 root sys
+f lib/svc/manifest/site/rc-pre-vmadmd.xml 0444 root sys
 f lib/svc/method/fs-joyent 0555 root bin
 f lib/svc/method/fs-root 0555 root bin
 f lib/svc/method/net-cleanup 0555 root sys
