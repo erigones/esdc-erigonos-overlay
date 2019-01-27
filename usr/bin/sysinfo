@@ -892,7 +892,7 @@ END
 
     for entry in "${Bootparams[@]}"; do
         fields=(${entry//=/ })
-        key=$(echo ${fields[0]} | sed -e "s/\-/\_/g")
+        key=$(echo ${fields[0]} | sed -e "s/\-/\_/g" -e "s/#//g")
         val=${fields[1]}
         echo "Bootparam_${key}='${val}'"
     done
@@ -999,7 +999,7 @@ END
     printed=0
     for entry in "${Bootparams[@]}"; do
         fields=(${entry//=/ })
-        key=$(echo ${fields[0]} | sed -e "s/\-/\_/g")
+        key=$(echo ${fields[0]} | sed -e "s/\-/\_/g" -e "s/#//g")
         val=${fields[1]}
         ((printed++))
         trailing_comma=","
