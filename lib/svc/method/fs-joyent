@@ -92,7 +92,7 @@ function make_usb_copy_if_possible
 
     echo "" > /dev/console
     echo "Moving files from USB boot device onto disk storage." > /dev/console
-    echo "This may take several minutes. Please note the time..." > /dev/console
+    echo "This may take several minutes." > /dev/console
     echo "" > /dev/console
     echo "" > /dev/console
 
