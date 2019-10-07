@@ -75,64 +75,10 @@ function add_active_aggr_links
     done
 }
 
-function log_if_state
-{
-    set -o xtrace
-    echo "== debug start: $1 =="
-    nictagadm list
-    if ! /usr/sbin/dladm show-phys; then
-        echo "WARNING: 'dladm show-phys' failed"
-    fi
-    # NOTE: DO NOT do a 'dladm show-linkprop' when using the bnx driver,
-    # as it puts it into an unusable state!
-    if ! /sbin/ifconfig -a; then
-        echo "WARNING: 'ifconfig -a' failed"
-    fi
-    echo "== debug end: $1 =="
-}
-
-# Gets the link state for the given interface
-function get_link_state
-{
-    set -o xtrace
-    link_state=$(/usr/sbin/dladm show-phys -po state $1 2>/dev/null)
-}
-
 # Waits for up to 10 seconds for the link state to change to the given value
 function wait_for_admin_nic_state
 {
-    set -o xtrace
-    echo "wait_for_admin_nic_state: waiting for state '$1'"
-    i=0
-    get_link_state ${SYSINFO_NIC_admin}
-    while [[ "$link_state" != "$1" ]] && [[ $i -ne 10 ]]; do
-        sleep 1
-        echo "  $i: link_state=$link_state"
-        ((i++))
-        get_link_state ${SYSINFO_NIC_admin}
-    done
-    echo "wait_for_admin_nic_state: finished in state '$link_state'"
-}
-
-function valid_mtu
-{
-    set -o xtrace
-    typeset tag mtu
-
-    tag="$1"
-    mtu="$2"
-
-    if ! [[ $mtu =~ [1-9][0-9][0-9][0-9] ]] ; then
-        echo "Invalid mtu specified for tag $tag: $mtu"
-        echo "Valid MTU range is from 1500-9000"
-        exit $SMF_EXIT_ERR_FATAL
-    fi
-
-    if [[ $mtu -gt 9000 || $mtu -lt 1500 ]]; then
-        echo "Invalid mtu specified for tag $tag: $mtu"
-        echo "Valid MTU range is from 1500-9000"
-        exit $SMF_EXIT_ERR_FATAL
-    fi
+    wait_for_nic_state "${SYSINFO_NIC_admin}" "$1"
 }
 
 # Plumbs the admin interface, and attempts to work around poorly-behaved
@@ -438,14 +384,14 @@ function setup_mtu
             exit $SMF_EXIT_ERR_FATAL
         fi
 
-	#
-	# Check the current MTU of the device. To help out devices which
-	# don't support the setting of the MTU (here's looking at you
-	# bnx), if the MTU is identical to its default, don't do
-	# anything and save the poor folks stuck with bnx some grief.
-	#
-	curmtu=$(/usr/sbin/dladm show-linkprop -c -o value -p mtu ${link})
-	[[ $? -eq 0 ]] && [[ "$curmtu" -eq "${mtus[$mac]}" ]] && continue
+        #
+        # Check the current MTU of the device. To help out devices which
+        # don't support the setting of the MTU (here's looking at you
+        # bnx), if the MTU is identical to its default, don't do
+        # anything and save the poor folks stuck with bnx some grief.
+        #
+        curmtu=$(/usr/sbin/dladm show-linkprop -c -o value -p mtu ${link})
+        [[ $? -eq 0 ]] && [[ "$curmtu" -eq "${mtus[$mac]}" ]] && continue
 
         if ! /usr/sbin/dladm set-linkprop -p mtu=${mtus[$mac]} ${link}; then
             echo "Failed to set mtu to ${mtus[$mac]} for link ${link}"
@@ -472,8 +418,9 @@ function plumbif
 }
 
 if smf_is_globalzone; then
-
-    /usr/sbin/dladm init-phys
+    EARLY_ADMIN=
+    [[ -f /etc/svc/volatile/.early_admin_setup ]] && EARLY_ADMIN=1
+    [[ -n "$EARLY_ADMIN" ]] || /usr/sbin/dladm init-phys
 
     # The next command is for logging purposes only
     log_if_state before
@@ -493,6 +440,10 @@ if smf_is_globalzone; then
         fi
 
         load_boot_file_config
+
+        # NOTE: some of the routes boot_file_config_init tries to add may
+        # fail if they are admin network routes added by the
+        # network/early-admin service.  This is expected and not a problem.
         boot_file_config_init
     else
         # Load config variables with CONFIG_ prefix,
@@ -591,9 +542,18 @@ if smf_is_globalzone; then
         exit ${SMF_EXIT_ERR_CONFIG}
     fi
 
+    [[ -z "$EARLY_ADMIN" ]] && [[ -z "${nic_admin_on_etherstub}" ]] && plumb_admin
     eval "nic_admin_on_etherstub=\${SYSINFO_Etherstub_${SYSINFO_NIC_admin}_NIC_Names}"
 
-    [[ -z "${nic_admin_on_etherstub}" ]] && plumb_admin
+    # If we performed early configuration of the admin network and
+    # the admin interface is on a link aggregation, the aggregation
+    # has already been configured.  Add it to the list of active aggrs
+    # so the checks in vnic_up[6] are aware of it.
+    if [[ -n "$EARLY_ADMIN" && "${SYSINFO_NIC_admin}" =~ aggr[0-9]+$ ]]; then
+        eval "macs=\${SYSINFO_Aggregation_${SYSINFO_NIC_admin}_MACs}"
+
+        add_active_aggr_links ${SYSINFO_NIC_admin} $macs
+    fi
 
     # Prefer the config file for admin nic values, but use
     # bootparams if present
@@ -633,6 +593,9 @@ if smf_is_globalzone; then
 
     if [[ $admin_ip == 'none' ]]; then
         echo 'INFO: not configuring IP on admin interface (admin_ip=none)'
+    elif [[ -n "$EARLY_ADMIN" ]]; then
+        echo 'INFO: admin interface already configured (early setup)'
+        ADMIN_NIC_UP=true
     elif [[ -n $admin_ip ]] && [[ -n $admin_netmask ]]; then
         /sbin/ifconfig ${admin_iface_active} inet ${admin_ip} \
             netmask ${admin_netmask} up
@@ -676,7 +639,7 @@ if smf_is_globalzone; then
         fi
     fi
 
-    if [[ -n ${admin_ip6} ]]; then
+    if [[ -n ${admin_ip6} && -z "$EARLY_ADMIN" ]]; then
         # Plumb interface for inet6
         ifconfig ${admin_iface_active} inet6 \
             plumb mtu ${CONFIG_admin_mtu:-1500} up

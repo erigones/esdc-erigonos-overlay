@@ -129,34 +129,6 @@ OVERLAY_RULES="/var/run/smartdc/networking/overlay_rules.json"
 typeset MODE
 
 
-function log_if_state
-{
-    echo "== debug start: $1 =="
-    if ! /sbin/ifconfig -a; then
-        echo "WARNING: 'ifconfig -a' failed"
-    fi
-    echo "== debug end: $1 =="
-}
-
-function valid_mtu
-{
-    set -o xtrace
-    typeset tag="$1"
-    typeset mtu="$2"
-
-    if ! [[ "${mtu}" =~ [1-9][0-9][0-9][0-9] ]] ; then
-        echo "Invalid mtu specified for tag ${tag}: ${mtu}"
-        echo "Valid MTU range is from 1500-9000"
-        exit "${SMF_EXIT_ERR_FATAL}"
-    fi
-
-    if [[ "${mtu}" -gt 9000 || "${mtu}" -lt 1500 ]]; then
-        echo "Invalid mtu specified for tag ${tag}: ${mtu}"
-        echo "Valid MTU range is from 1500-9000"
-        exit "${SMF_EXIT_ERR_FATAL}"
-    fi
-}
-
 # Creates, plumbs and brings up a vnic with the specified inet parameters
 function vnic_up
 {

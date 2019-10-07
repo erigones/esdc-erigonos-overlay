@@ -25,6 +25,7 @@ fatal()
 
 . /lib/svc/share/smf_include.sh
 . /lib/svc/share/fs_include.sh
+. /lib/sdc/usb-key.sh
 
 # first of all, if we aren't the global zone this doesn't make any sense to run
 
@@ -70,56 +71,6 @@ function mount_zfs
     echo ${output} 1>&2
 }
 
-function make_usb_copy_if_possible
-{
-    [[ -n "${SYS_ZPOOL}" ]] || fatal "don't know system zpool name"
-
-    zpool list -Ho name | grep "^${SYS_ZPOOL}\$"
-    if [[ $? != 0 ]]; then
-        echo "skipping USB copy setup: no ${SYS_ZPOOL} zpool" >/dev/console
-        # Still return OK, because this is the expected case for first headnode
-        # boot.
-        return 0
-    fi
-
-    USBDATASET=${SYS_ZPOOL}/usbkey
-    if ! zfs list -Ho name | grep "^${USBDATASET}\$" >/dev/null; then
-        echo "skipping USB copy setup: no zones/usbkey dataset" >/dev/console
-        # Still return OK, because as of HEAD-2343 a CN being converted to a HN
-        # will not yet have this dataset on its first boot as an HN.
-        return 0
-    fi
-
-    echo "" > /dev/console
-    echo "Moving files from USB boot device onto disk storage." > /dev/console
-    echo "This may take several minutes." > /dev/console
-    echo "" > /dev/console
-    echo "" > /dev/console
-
-    mkdir ${COPYINPOINT}
-    mount_zfs ${USBDATASET} ${COPYINPOINT}
-
-    $(cd ${USBMOUNTPOINT}; rsync -a --log-file=/dev/console --exclude private --exclude os * ${COPYINPOINT})
-    if [[ -d ${USBMOUNTPOINT}/os ]]; then
-        (cd ${USBMOUNTPOINT}/os ; \
-            for dir in $(ls -d *); do
-                # source comes from pcfs which we've got lowering the case
-                # of everything, but we normally use capital T and Z for
-                # buildstamp, so fix it here.
-                source_dir=${dir}
-                target_dir=$(echo ${dir} | tr "[:lower:]" "[:upper:]")
-                mkdir -p ${COPYINPOINT}/os
-                echo "Copying: ${source_dir}/ ${COPYINPOINT}/os/${target_dir}" > /dev/console
-                rsync -a ${source_dir}/ ${COPYINPOINT}/os/${target_dir}
-            done
-        )
-    fi
-
-    echo "" > /dev/console
-    echo "Done copying files from USB device" > /dev/console
-    return 0
-}
-
 # Assume the system zpool is zones, but if a different system pool
 # identifies itself (by virtue of the .system_pool file being present in the
 # pool's root dataset), then use that system pool instead.
@@ -130,11 +81,6 @@ BOOTED_FROM_HDD=1
 
 # Placeholder for current Boot Environment name
 BENAME="dcos-1"
-
-# USB mount points
-USBMOUNTPOINT=/mnt/`svcprop -p "joyentfs/usb_mountpoint" ${SMF_FMRI}`
-COPYINPOINT=`svcprop -p "joyentfs/usb_copy_path" ${SMF_FMRI}`
-DEBUG=`svcprop -p "joyentfs/debug" ${SMF_FMRI}`
 
 # Try to determine if we are booted from HDD
 # Do this by finding out whether "/" is being mounted as "zfs"
@@ -162,24 +108,20 @@ if [ $? -ne 0 ]; then
          pools=$(zpool import | grep "pool:" | awk '{print $2}')
     fi
 
-    # Import pools found or requested. Also determine the system pool
-    # when we run from live image.
     for pool in $pools; do
         zpool import -f $pool
         # Due to early, failed attempts to support the filesystem_limits
         # feature we now need to ensure the dependent feature is enabled.
         zpool set feature@extensible_dataset=enabled $pool
-        # Determine the system pool (only ONE can be system pool) when
-        # we run from live image
         if [[ ${BOOTED_FROM_HDD} -ne 1 && -f /${pool}/.system_pool ]]; then
             SYS_ZPOOL=$pool
         fi
     done
 
-    # Explicitly set features and mount system zpool default dataset
-    zpool set feature@extensible_dataset=enabled ${SYS_ZPOOL}
-    zfs mount ${SYS_ZPOOL}
-
+#    # Explicitly set features and mount system zpool default dataset
+#    zpool set feature@extensible_dataset=enabled ${SYS_ZPOOL}
+#    zfs mount ${SYS_ZPOOL}
+#
     svccfg -s svc:/system/smartdc/init setprop \
         config/zpool=${SYS_ZPOOL}
     svccfg -s svc:/system/smartdc/init:default refresh
@@ -214,12 +156,6 @@ if [ $? -ne 0 ]; then
         # Stash the SUNWdefault.xml file so we can update the
         # persistent version after mounting zones/config.
         cp /etc/zones/SUNWdefault.xml /tmp/
-
-        if [[ -n $(/bin/bootparams | grep '^headnode=true') || \
-            -n $(/bin/bootparams | grep '^smartos=true') ]]; then
-            mkdir /usbkey
-            mount_zfs ${SYS_ZPOOL}/usbkey /usbkey
-        fi
 
         if [ ${BOOTED_FROM_HDD} -eq 0 ]; then
             VARDS="${SYS_ZPOOL}/var"
@@ -262,10 +198,17 @@ if [ $? -ne 0 ]; then
             mount -O -F lofs /var/svc/manifest/site /opt/smartdc/agents/smf
         fi
 
+        if [[ -n $(/bin/bootparams | grep '^headnode=true') || \
+            -n $(/bin/bootparams | grep '^smartos=true') ]]; then
+            mkdir /usbkey
+            mount_zfs ${SYS_ZPOOL}/usbkey /usbkey
+        fi
+
         _swapdev=/dev/zvol/dsk/${SYS_ZPOOL}/swap
         if ! swap -l | grep -q ^${_swapdev}; then
             swap -a ${_swapdev} || fatal "failed to configure swap device"
         fi
+
 
         #
         # Configure the dump device on top of a ZFS volume.  In addition to the
@@ -281,24 +224,24 @@ if [ $? -ne 0 ]; then
             fatal "failed to set checksum=noparity on dump zvol"
         zpool set feature@multi_vdev_crash_dump=enabled ${SYS_ZPOOL} || \
             fatal "failed to enable multi_vdev_crash_dump ZFS feature"
-	dumpadm -y -d /dev/zvol/dsk/${SYS_ZPOOL}/dump || \
+        dumpadm -y -d /dev/zvol/dsk/${SYS_ZPOOL}/dump || \
             fatal "failed to configure dump device"
 
-	zfs list -H -o name ${SYS_ZPOOL}/cores/global >/dev/null 2>&1
-	if [ $? -ne 0 ]; then
-	    # Booting for the first time on a CN whose cores dataset is setup
-	    # in the 6.x style.  Convert to the new style.
-	    zfs destroy -r ${SYS_ZPOOL}/cores
-	    zfs create -o compression=gzip -o mountpoint=none ${SYS_ZPOOL}/cores
-	    zfs create -o quota=10g -o mountpoint=/${SYS_ZPOOL}/global/cores \
-	        ${SYS_ZPOOL}/cores/global
-	fi
+        zfs list -H -o name ${SYS_ZPOOL}/cores/global >/dev/null 2>&1
+        if [ $? -ne 0 ]; then
+            # Booting for the first time on a CN whose cores dataset is setup
+            # in the 6.x style.  Convert to the new style.
+            zfs destroy -r ${SYS_ZPOOL}/cores
+            zfs create -o compression=gzip -o mountpoint=none ${SYS_ZPOOL}/cores
+            zfs create -o quota=10g -o mountpoint=/${SYS_ZPOOL}/global/cores \
+                ${SYS_ZPOOL}/cores/global
+        fi
 
-	[[ ! -d /cores ]] && ln -s /${SYS_ZPOOL}/global/cores /cores
+        [[ ! -d /cores ]] && ln -s /${SYS_ZPOOL}/global/cores /cores
 
-	[[ -f /${SYS_ZPOOL}/currbooted ]] && \
+        [[ -f /${SYS_ZPOOL}/currbooted ]] && \
             mv /${SYS_ZPOOL}/currbooted /${SYS_ZPOOL}/lastbooted
-	uname -v >/${SYS_ZPOOL}/currbooted
+        uname -v >/${SYS_ZPOOL}/currbooted
     fi
 fi
 
@@ -325,7 +268,8 @@ if [ -d /var/upgrade_in_progress ]; then
     exit $SMF_EXIT_ERR_FATAL
 fi
 
-mount_usb_msg=""
+COPYINPOINT=`svcprop -p "joyentfs/usb_copy_path" ${SMF_FMRI}`
+DEBUG=`svcprop -p "joyentfs/debug" ${SMF_FMRI}`
 
 if [[ -d /mnt ]]; then
     chown root:root /mnt
@@ -334,72 +278,60 @@ else
     mkdir -m 700 /mnt
 fi
 
-mkdir -p ${USBMOUNTPOINT}
+function make_usb_copy_if_possible
+{
+    [[ -n "${SYS_ZPOOL}" ]] || fatal "don't know system zpool name"
 
-if [[ -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
-    mount_usb_msg="already mounted"
-    make_usb_copy_if_possible
-    exit $?
-fi
-
-# First thing to do is to mount the USB key / VMWare disk
-USBKEYS=`/usr/bin/disklist -a`
-for key in ${USBKEYS}; do
-    if [[ `/usr/sbin/fstyp /dev/dsk/${key}p0:1` == 'pcfs' ]]; then
-        /usr/sbin/mount -F pcfs -o foldcase,noatime /dev/dsk/${key}p0:1 \
-            ${USBMOUNTPOINT};
-        if [[ $? == "0" ]]; then
-            if [[ ! -f ${USBMOUNTPOINT}/.joyliveusb ]]; then
-                if [[ ${DEBUG} == "true" ]]; then
-                    mount_usb_msg="${mount_usb_msg}\n[debug] didn't find ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${key}p0:1"
-                fi
-                /usr/sbin/umount ${USBMOUNTPOINT};
-            else
-                if [[ ${DEBUG} == "true" ]]; then
-                    mount_usb_msg="${mount_usb_msg}\n[debug] found ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${key}p0:1"
-                fi
-                break;
-            fi
-        elif [[ ${DEBUG} == "true" ]]; then
-            mount_usb_msg="${mount_usb_msg}\n[debug] mount failed for pcfs /dev/dsk/${key}p0:1"
-        fi
-    elif [[ ${DEBUG} == "true" ]]; then
-        mount_usb_msg="${mount_usb_msg}\n[debug] /dev/dsk/${key}p0:1 is not pcfs"
+    zpool list -Ho name | grep "^${SYS_ZPOOL}\$"
+    if [[ $? != 0 ]]; then
+        echo "skipping USB copy setup: no ${SYS_ZPOOL} zpool" >/dev/console
+        # Still return OK, because this is the expected case for first headnode
+        # boot.
+        return 0
     fi
-done
 
-if [[ ! -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
-    # we're probably VMWare, so we're looking at a non-USB disk.
-    for disk in `/usr/bin/disklist -a`; do
-        if [[ `/usr/sbin/fstyp /dev/dsk/${disk}p1` == 'pcfs' ]]; then
-            /usr/sbin/mount -F pcfs -o foldcase,noatime /dev/dsk/${disk}p1 \
-                ${USBMOUNTPOINT};
-            if [[ $? == "0" ]]; then
-                if [[ ! -f ${USBMOUNTPOINT}/.joyliveusb ]]; then
-                    if [[ ${DEBUG} == "true" ]]; then
-                        mount_usb_msg="${mount_usb_msg}\n[debug] didn't find ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${disk}p1"
-                    fi
-                    /usr/sbin/umount ${USBMOUNTPOINT};
-                else
-                    if [[ ${DEBUG} == "true" ]]; then
-                        mount_usb_msg="${mount_usb_msg}\n[debug] found ${USBMOUNTPOINT}/.joyliveusb on pcfs /dev/dsk/${disk}p1"
-                    fi
-                    break;
-                fi
-            elif [[ ${DEBUG} == "true" ]]; then
-                mount_usb_msg="${mount_usb_msg}\n[debug] unable to mount /dev/dsk/${disk}p1"
-            fi
-        elif [[ ${DEBUG} == "true" ]]; then
-            mount_usb_msg="${mount_usb_msg}\n[debug] /dev/dsk/${disk}p1 is not pcfs"
-        fi
-    done
+    USBDATASET=${SYS_ZPOOL}/usbkey
+    if ! zfs list -Ho name | grep "^${USBDATASET}\$" >/dev/null; then
+        echo "skipping USB copy setup: no zones/usbkey dataset" >/dev/console
+        # Still return OK, because as of HEAD-2343 a CN being converted to a HN
+        # will not yet have this dataset on its first boot as an HN.
+        return 0
+    fi
+
+    echo "" > /dev/console
+    echo "Moving files from USB boot device onto disk storage." > /dev/console
+    echo "This may take several minutes." > /dev/console
+    echo "" > /dev/console
+    echo "" > /dev/console
+
+    mkdir ${COPYINPOINT}
+    mount_zfs ${USBDATASET} ${COPYINPOINT}
+
+    (cd ${USBMOUNTPOINT}; rsync -av --log-file=/dev/console --exclude private --exclude os * ${COPYINPOINT})
+    if [[ -d ${USBMOUNTPOINT}/os ]]; then
+        (cd ${USBMOUNTPOINT}/os ; \
+            for dir in $(ls -d *); do
+                # source comes from pcfs which we've got lowering the case
+                # of everything, but we normally use capital T and Z for
+                # buildstamp, so fix it here.
+                source_dir=${dir}
+                target_dir=$(echo ${dir} | tr "[:lower:]" "[:upper:]")
+                mkdir -p ${COPYINPOINT}/os
+                echo "Copying: ${source_dir}/ ${COPYINPOINT}/os/${target_dir}" > /dev/console
+                rsync -a ${source_dir}/ ${COPYINPOINT}/os/${target_dir}
+            done
+        )
+    fi
+
+    echo "" > /dev/console
+    echo "Done copying files from USB device" > /dev/console
+    return 0
+}
+
+USBMOUNTPOINT=$(mount_usb_key "")
+if [[ $? -ne 0 ]]; then
+    fatal "couldn't mount USB key"
 fi
 
-if [[ -f "${USBMOUNTPOINT}/.joyliveusb" ]]; then
-    mount_usb_msg="success"
-    make_usb_copy_if_possible
-    exit $?
-fi
-
-mount_usb_msg="${mount_usb_msg}\n[FATAL] mount_usb(): could not find USB Key"
-exit 1;
+make_usb_copy_if_possible
+exit $?
